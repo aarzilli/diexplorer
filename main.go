@@ -5,13 +5,23 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	"encoding/binary"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 )
 
 var Dwarf *dwarf.Data
+var TextStart uint64
+var TextData []byte
+var Symbols []Sym
 var mu sync.Mutex
+
+type Sym struct {
+	Name string
+	Addr uint64
+}
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage: diexplorer <executable file>\n")
@@ -24,45 +34,82 @@ func must(err error) {
 	}
 }
 
-type openFn func(string) *dwarf.Data
+type openFn func(string) (dwarf *dwarf.Data, textStart uint64, textData []byte)
 
-func openPE(path string) *dwarf.Data {
+func openPE(path string) (*dwarf.Data, uint64, []byte) {
 	file, _ := pe.Open(path)
 	if file == nil {
-		return nil
+		return nil, 0, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found PE executable\n")
 	dwarf, err := file.DWARF()
 	must(err)
-	return dwarf
+
+	var imageBase uint64
+	switch oh := file.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		imageBase = uint64(oh.ImageBase)
+	case *pe.OptionalHeader64:
+		imageBase = oh.ImageBase
+	default:
+		panic(fmt.Errorf("pe file format not recognized"))
+	}
+	sect := file.Section(".text")
+	if sect == nil {
+		panic(fmt.Errorf("text section not found"))
+	}
+	textStart := imageBase + uint64(sect.VirtualAddress)
+	textData, err := sect.Data()
+	must(err)
+	return dwarf, textStart, textData
 }
 
-func openMacho(path string) *dwarf.Data {
+func openMacho(path string) (*dwarf.Data, uint64, []byte) {
 	file, _ := macho.Open(path)
 	if file == nil {
-		return nil
+		return nil, 0, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found Macho-O executable\n")
 	dwarf, err := file.DWARF()
 	must(err)
-	return dwarf
+
+	sect := file.Section("__text")
+	if sect == nil {
+		panic(fmt.Errorf("text section not found"))
+	}
+	textStart := sect.Addr
+	textData, err := sect.Data()
+	must(err)
+
+	return dwarf, textStart, textData
 }
 
-func openElf(path string) *dwarf.Data {
+func openElf(path string) (*dwarf.Data, uint64, []byte) {
 	file, _ := elf.Open(path)
 	if file == nil {
-		return nil
+		return nil, 0, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found ELF executable\n")
 	dwarf, err := file.DWARF()
 	must(err)
-	return dwarf
+	sect := file.Section(".text")
+	if sect == nil {
+		panic(fmt.Errorf("text section not found"))
+	}
+	textStart := sect.Addr
+	textData, err := sect.Data()
+	must(err)
+	return dwarf, textStart, textData
 }
 
 type EntryNode struct {
 	E      *dwarf.Entry
 	Childs []*EntryNode
 	Ranges [][2]uint64
+}
+
+func (en *EntryNode) IsFunction() bool {
+	return en.E.Tag == dwarf.TagSubprogram
 }
 
 func toEntryNode(rdr *dwarf.Reader) (node *EntryNode, addOffs []dwarf.Offset) {
@@ -145,17 +192,62 @@ childrenLoop:
 	return node, addOffs
 }
 
+func findSymbols() {
+	rdr := Dwarf.Reader()
+	for {
+		e, err := rdr.Next()
+		must(err)
+		if e == nil {
+			break
+		}
+		switch e.Tag {
+		case dwarf.TagSubprogram:
+			Symbols = append(Symbols, Sym{
+				Name: e.Val(dwarf.AttrName).(string),
+				Addr: e.Val(dwarf.AttrLowpc).(uint64),
+			})
+		case dwarf.TagVariable:
+			loc := e.Val(dwarf.AttrLocation).([]byte)
+			if loc[0] != 0x3 {
+				// not DW_OP_addr
+				break
+			}
+			addr := uint64(0)
+			switch len(loc[1:]) {
+			case 4:
+				addr = uint64(binary.LittleEndian.Uint32(loc[1:]))
+			case 8:
+				addr = binary.LittleEndian.Uint64(loc[1:])
+			default:
+				panic(fmt.Errorf("wrong location %v", loc))
+			}
+			Symbols = append(Symbols, Sym{
+				Name: e.Val(dwarf.AttrName).(string),
+				Addr: addr,
+			})
+		}
+		if e.Tag != dwarf.TagCompileUnit {
+			rdr.SkipChildren()
+		}
+	}
+	sort.Slice(Symbols, func(i, j int) bool {
+		return Symbols[i].Addr < Symbols[j].Addr
+	})
+}
+
 func main() {
-	if len(os.Args) != 2 {
+	if len(os.Args) < 2 {
 		usage()
 	}
 
 	for _, fn := range []openFn{openPE, openElf, openMacho} {
-		Dwarf = fn(os.Args[1])
+		Dwarf, TextStart, TextData = fn(os.Args[1])
 		if Dwarf != nil {
 			break
 		}
 	}
+
+	findSymbols()
 
 	serve()
 }

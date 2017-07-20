@@ -91,6 +91,11 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 		{{range .}}<tt>
 			{{template "entryNode" .}}
 		</tt><hr>{{end}}
+		{{with $first := (index . 0)}}
+			{{if $first.IsFunction}}
+				<a href='/{{$first.E.Offset | printf "%x"}}/disassemble'>Disassemble</a>
+			{{end}}
+		{{end}}
 	</body>
 </html>
 
@@ -118,13 +123,18 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 func allHandler(w http.ResponseWriter, r *http.Request) {
 	var off dwarf.Offset
 	v := strings.Split(r.URL.Path, "/")
-	for _, x := range v {
+	d := false
+	for i, x := range v {
 		if len(x) != 0 {
 			n, err := strconv.ParseUint(x, 16, 64)
 			if err != nil {
 				return
 			}
 			off = dwarf.Offset(n)
+			if i+1 < len(v) && v[i+1] == "disassemble" {
+				d = true
+				break
+			}
 		}
 	}
 
@@ -149,6 +159,29 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		entryNode, addOffs := toEntryNode(rdr)
 		stack = append(stack, addOffs...)
 		nodes = append(nodes, entryNode)
+		if d {
+			break
+		}
+	}
+
+	if d {
+		rdr.Seek(0)
+		var cu *dwarf.Entry
+		for {
+			e, err := rdr.Next()
+			must(err)
+			if e == nil {
+				break
+			}
+			if e.Tag == dwarf.TagCompileUnit {
+				cu = e
+			}
+			if e.Offset == nodes[0].E.Offset {
+				break
+			}
+		}
+		disassemble(w, nodes[0], cu)
+		return
 	}
 
 	must(tmpl.Funcs(template.FuncMap{

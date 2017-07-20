@@ -1,0 +1,13 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "XiIfX9A6D6TheN+vNgoLKlLp+mc=",
+			"path": "golang.org/x/arch/x86/x86asm",
+			"revision": "3073097500313c60fb17599fa66e3a6453992117",
+			"revisionTime": "2017-07-15T20:39:54Z"
+		}
+	],
+	"rootPath": "github.com/aarzilli/diexplorer"
+}
