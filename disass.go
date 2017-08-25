@@ -23,35 +23,7 @@ func lookup(addr uint64) (string, uint64) {
 	return "", 0
 }
 
-func findScopeEnterVariables(en *EntryNode, pc uint64) []string {
-	r := []string{}
-
-	if len(en.Ranges) <= 0 {
-		return r
-	}
-
-	scopeStart := en.Ranges[0][0]
-
-	for i := range en.Childs {
-		switch en.Childs[i].E.Tag {
-		case dwarf.TagVariable, dwarf.TagFormalParameter:
-			varStartScope, _ := en.Childs[i].E.Val(dwarf.AttrStartScope).(int64)
-			varStartScope += int64(scopeStart)
-			if uint64(varStartScope) == pc {
-				name, _ := en.Childs[i].E.Val(dwarf.AttrName).(string)
-				r = append(r, fmt.Sprintf("%q %x", name, en.Childs[i].E.Offset))
-			}
-		case 0:
-			// nothing to do
-		default:
-			r = append(r, findScopeEnterVariables(en.Childs[i], pc)...)
-		}
-	}
-	return r
-}
-
 func lexicalBlockSynthesis(out io.Writer, en *EntryNode) {
-	fmt.Fprintf(out, "<h3>Lexical Block synthesis</h3>\n")
 	fmt.Fprintf(out, "<ul>\n")
 	for i := range en.Childs {
 		switch en.Childs[i].E.Tag {
@@ -69,40 +41,25 @@ func lexicalBlockSynthesis(out io.Writer, en *EntryNode) {
 	fmt.Fprintf(out, "</ul>\n")
 }
 
-type scopeStack []*EntryNode
-
-func (s *scopeStack) Push(en *EntryNode) {
-	*s = append(*s, en)
-}
-
-func (s *scopeStack) Pop() {
-	*s = (*s)[:len(*s)-1]
-}
-
-func (s *scopeStack) EnterChild(pc uint64) bool {
-	cur := (*s)[len(*s)-1]
-	for i := range cur.Childs {
-		for j := range cur.Childs[i].Ranges {
-			if cur.Childs[i].Ranges[j][0] == pc {
-				s.Push(cur.Childs[i])
-				s.EnterChild(pc)
-				return true
-			}
+func findScopes(en *EntryNode, pc uint64) []string {
+	found := false
+	for _, rng := range en.Ranges {
+		if pc >= rng[0] && pc < rng[1] {
+			found = true
 		}
 	}
-	return false
-}
 
-func (s *scopeStack) ExitCurrent(pc uint64) bool {
-	cur := (*s)[len(*s)-1]
-	for i := range cur.Ranges {
-		if cur.Ranges[i][1] == pc {
-			s.Pop()
-			s.ExitCurrent(pc)
-			return true
-		}
+	if !found {
+		return nil
 	}
-	return false
+
+	r := []string{fmt.Sprintf("lb%x", en.E.Offset)}
+
+	for i := range en.Childs {
+		r = append(r, findScopes(en.Childs[i], pc)...)
+	}
+
+	return r
 }
 
 var colors = []string{
@@ -215,14 +172,12 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 `, fnname)
 
 	// print lexical blocks synthesis
+	fmt.Fprintf(out, "<h3>Lexical Block synthesis</h3>\n")
 	lexicalBlockSynthesis(out, en)
-
-	var scopeStack scopeStack
-	scopeStack.Push(en)
 
 	// print disassembly
 	fmt.Fprintf(out, "<h3>Disassembly</h3>\n<tt><table id='disasstable'>\n")
-	fmt.Fprintf(out, "<tr><td>Pos</td><td>PC</td><td>Bytes</td><td>Instruction</td><td>Start scope variables</td></tr>\n")
+	fmt.Fprintf(out, "<tr><td>Pos</td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
 
@@ -251,31 +206,12 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 			line = 0
 		}
 
-		// find scopes starting or ending here
-		if !scopeStack.EnterChild(pc) {
-			scopeStack.ExitCurrent(pc)
-		}
+		fmt.Fprintf(out, "<tr class=\"%s\">", strings.Join(findScopes(en, pc), " "))
 
-		// find variables that enter scope here
-		vars := findScopeEnterVariables(en, pc)
-
-		scopes := make([]string, 0, len(scopeStack))
-
-		fmt.Fprintf(out, "<tr class=\"")
-		for i := range scopeStack {
-			fmt.Fprintf(out, " lb%x", scopeStack[i].E.Offset)
-			scopes = append(scopes, fmt.Sprintf("%x", scopeStack[i].E.Offset))
-		}
-		fmt.Fprintf(out, "\">")
-
-		fmt.Fprintf(out, "<td>%s:%d</td><td>%#x</td><td>%x</td><td>%s</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, pc, TextData[i:i+size], html.EscapeString(text), strings.Join(vars, " "))
+		fmt.Fprintf(out, "<td>%s:%d</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, pc, TextData[i:i+size], html.EscapeString(text))
 
 		fmt.Fprintf(out, "</tr>\n")
 		pc += size
 	}
-	scopeStack.Pop()
 	fmt.Fprintf(out, "</table></tt>\n</body>\n")
-	//TODO:
-	// - add colorization of scopes
-	// - remove disass argument shit from main
 }
