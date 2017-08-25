@@ -32,7 +32,7 @@ func lexicalBlockSynthesis(out io.Writer, en *EntryNode) {
 			fmt.Fprintf(out, "<li>%x %s</li>\n", en.Childs[i].E.Offset, name)
 		case 0:
 			// nothing to do
-		default:
+		case dwarf.TagLexDwarfBlock:
 			fmt.Fprintf(out, "<li><input type='checkbox' id='lb%x' onclick='javascript:repaint()'></input>&nbsp;%x Lexical block\n", en.Childs[i].E.Offset, en.Childs[i].E.Offset)
 			lexicalBlockSynthesis(out, en.Childs[i])
 			fmt.Fprintf(out, "</li>\n")

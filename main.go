@@ -202,29 +202,36 @@ func findSymbols() {
 		}
 		switch e.Tag {
 		case dwarf.TagSubprogram:
-			Symbols = append(Symbols, Sym{
-				Name: e.Val(dwarf.AttrName).(string),
-				Addr: e.Val(dwarf.AttrLowpc).(uint64),
-			})
+			addr, okAddr := e.Val(dwarf.AttrLowpc).(uint64)
+			name, okName := e.Val(dwarf.AttrName).(string)
+			if okAddr && okName {
+				Symbols = append(Symbols, Sym{
+					Name: name,
+					Addr: addr,
+				})
+			}
 		case dwarf.TagVariable:
-			loc := e.Val(dwarf.AttrLocation).([]byte)
-			if loc[0] != 0x3 {
-				// not DW_OP_addr
-				break
+			loc, okLoc := e.Val(dwarf.AttrLocation).([]byte)
+			name, okName := e.Val(dwarf.AttrName).(string)
+			if okLoc && okName {
+				if loc[0] != 0x3 {
+					// not DW_OP_addr
+					break
+				}
+				addr := uint64(0)
+				switch len(loc[1:]) {
+				case 4:
+					addr = uint64(binary.LittleEndian.Uint32(loc[1:]))
+				case 8:
+					addr = binary.LittleEndian.Uint64(loc[1:])
+				default:
+					panic(fmt.Errorf("wrong location %v", loc))
+				}
+				Symbols = append(Symbols, Sym{
+					Name: name,
+					Addr: addr,
+				})
 			}
-			addr := uint64(0)
-			switch len(loc[1:]) {
-			case 4:
-				addr = uint64(binary.LittleEndian.Uint32(loc[1:]))
-			case 8:
-				addr = binary.LittleEndian.Uint64(loc[1:])
-			default:
-				panic(fmt.Errorf("wrong location %v", loc))
-			}
-			Symbols = append(Symbols, Sym{
-				Name: e.Val(dwarf.AttrName).(string),
-				Addr: addr,
-			})
 		}
 		if e.Tag != dwarf.TagCompileUnit {
 			rdr.SkipChildren()

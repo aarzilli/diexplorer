@@ -138,6 +138,8 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	root := off == 0
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -161,6 +163,11 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, entryNode)
 		if d {
 			break
+		}
+		if root {
+			if e, _ := rdr.Next(); e != nil {
+				stack = append(stack, e.Offset)
+			}
 		}
 	}
 
