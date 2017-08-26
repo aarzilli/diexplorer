@@ -14,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"bytes"
+	
+	"github.com/derekparker/delve/pkg/dwarf/op"
 )
 
 type HandleFunc func(w http.ResponseWriter, r *http.Request)
@@ -55,7 +58,6 @@ func fmtEntryNodeHeader(e *dwarf.Entry) template.HTML {
 }
 
 func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
-	//TODO: interpret location attribute
 	switch f.Class {
 	case dwarf.ClassReference:
 		name := findReferenceName(f.Val.(dwarf.Offset), nodes)
@@ -64,6 +66,13 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%#x</td>", f.Attr.String(), f.Val.(uint64)))
 	case dwarf.ClassString:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(strconv.Quote(f.Val.(string)))))
+	case dwarf.ClassExprLoc:
+		block, _ := f.Val.([]byte)
+		var out bytes.Buffer
+		op.PrettyPrint(&out, block)
+		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(out.String())))
+	case dwarf.ClassLocListPtr:
+		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
 	default:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(fmt.Sprint(f.Val))))
 	}
@@ -86,23 +95,47 @@ func fmtRange(f [2]uint64) template.HTML {
 var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype html>
 <html>
 	<head>
+		<style>
+			.dwarftbl td {
+				padding-left: 10px;
+				padding-right: 10px;
+				vertical-align: top;
+			}
+			.dwarftbl td pre {
+				margin-top: 0px;
+				margin-bottom: 0px;
+			}
+		</style>
+		<script>
+			function toggleLoclists() {
+				var lls = document.getElementsByClassName("loclist")
+				for (var i = 0; i < lls.length; i++) {
+					if (lls[i].style["display"] == "none") {
+						lls[i].style["display"] = "block";
+					} else {
+						lls[i].style["display"] = "none";
+					}
+				}
+			}
+		</script>
 	</head>
 	<body>
+		{{with $first := (index . 0)}}
+			{{if $first.IsFunction}}
+				<a href='/{{$first.E.Offset | printf "%x"}}/disassemble'>DISASSEMBLE</a>
+			{{end}}
+		{{end}}
+		<p><input type='checkbox' onclick='javascript:toggleLoclists()'></input>&nbsp;Show loclists</p>
 		{{range .}}<tt>
 			{{template "entryNode" .}}
 		</tt><hr>{{end}}
-		{{with $first := (index . 0)}}
-			{{if $first.IsFunction}}
-				<a href='/{{$first.E.Offset | printf "%x"}}/disassemble'>Disassemble</a>
-			{{end}}
-		{{end}}
 	</body>
 </html>
 
 {{define "entryNode"}}
 	<div style="padding-left: 1em;">
 		{{EntryNodeHeader .E}}<br>
-		<table style="padding-left: 1em;">
+		<table style="padding-left: 1em;" class='dwarftbl'>
 		{{range .E.Field}}
 			<tr>{{EntryNodeField .}}</tr>
 		{{end}}

@@ -10,11 +10,15 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"bytes"
+	
+	"github.com/derekparker/delve/pkg/dwarf/op"
 )
 
 var Dwarf *dwarf.Data
 var TextStart uint64
 var TextData []byte
+var DebugLoc loclistReader
 var Symbols []Sym
 var mu sync.Mutex
 
@@ -34,12 +38,12 @@ func must(err error) {
 	}
 }
 
-type openFn func(string) (dwarf *dwarf.Data, textStart uint64, textData []byte)
+type openFn func(string) (dwarf *dwarf.Data, textStart uint64, textData []byte, locData []byte)
 
-func openPE(path string) (*dwarf.Data, uint64, []byte) {
+func openPE(path string) (*dwarf.Data, uint64, []byte, []byte) {
 	file, _ := pe.Open(path)
 	if file == nil {
-		return nil, 0, nil
+		return nil, 0, nil, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found PE executable\n")
 	dwarf, err := file.DWARF()
@@ -61,13 +65,17 @@ func openPE(path string) (*dwarf.Data, uint64, []byte) {
 	textStart := imageBase + uint64(sect.VirtualAddress)
 	textData, err := sect.Data()
 	must(err)
-	return dwarf, textStart, textData
+	var locData []byte
+	if locSec := file.Section(".debug_loc"); locSec != nil {
+		locData, _ = locSec.Data()
+	}
+	return dwarf, textStart, textData, locData
 }
 
-func openMacho(path string) (*dwarf.Data, uint64, []byte) {
+func openMacho(path string) (*dwarf.Data, uint64, []byte, []byte) {
 	file, _ := macho.Open(path)
 	if file == nil {
-		return nil, 0, nil
+		return nil, 0, nil, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found Macho-O executable\n")
 	dwarf, err := file.DWARF()
@@ -80,14 +88,17 @@ func openMacho(path string) (*dwarf.Data, uint64, []byte) {
 	textStart := sect.Addr
 	textData, err := sect.Data()
 	must(err)
-
-	return dwarf, textStart, textData
+	var locData []byte
+	if locSec := file.Section("__debug_loc"); locSec != nil {
+		locData, _ = locSec.Data()
+	}
+	return dwarf, textStart, textData, locData
 }
 
-func openElf(path string) (*dwarf.Data, uint64, []byte) {
+func openElf(path string) (*dwarf.Data, uint64, []byte, []byte) {
 	file, _ := elf.Open(path)
 	if file == nil {
-		return nil, 0, nil
+		return nil, 0, nil, nil
 	}
 	fmt.Fprintf(os.Stderr, "Found ELF executable\n")
 	dwarf, err := file.DWARF()
@@ -99,7 +110,11 @@ func openElf(path string) (*dwarf.Data, uint64, []byte) {
 	textStart := sect.Addr
 	textData, err := sect.Data()
 	must(err)
-	return dwarf, textStart, textData
+	var locData []byte
+	if locSec := file.Section(".debug_loc"); locSec != nil {
+		locData, _ = locSec.Data()
+	}
+	return dwarf, textStart, textData, locData
 }
 
 type EntryNode struct {
@@ -192,6 +207,91 @@ childrenLoop:
 	return node, addOffs
 }
 
+type loclistReader struct {
+	data  []byte
+	cur   int
+	ptrSz int
+}
+
+func (rdr *loclistReader) Seek(off int) {
+	rdr.cur = off
+}
+
+func (rdr *loclistReader) read(sz int) []byte {
+	r := rdr.data[rdr.cur : rdr.cur+sz]
+	rdr.cur += sz
+	return r
+}
+
+func (rdr *loclistReader) oneAddr() uint64 {
+	switch rdr.ptrSz {
+	case 4:
+		addr := binary.LittleEndian.Uint32(rdr.read(rdr.ptrSz))
+		if addr == ^uint32(0) {
+			return ^uint64(0)
+		}
+		return uint64(addr)
+	case 8:
+		addr := uint64(binary.LittleEndian.Uint64(rdr.read(rdr.ptrSz)))
+		return addr
+	default:
+		panic("bad address size")
+	}
+}
+
+func (rdr *loclistReader) Next(e *loclistEntry) bool {
+	e.lowpc = rdr.oneAddr()
+	e.highpc = rdr.oneAddr()
+
+	if e.lowpc == 0 && e.highpc == 0 {
+		return false
+	}
+
+	if e.BaseAddressSelection() {
+		e.instr = nil
+		return true
+	}
+
+	instrlen := binary.LittleEndian.Uint16(rdr.read(2))
+	e.instr = rdr.read(int(instrlen))
+	return true
+}
+
+type loclistEntry struct {
+	lowpc, highpc uint64
+	instr         []byte
+}
+
+func (e *loclistEntry) BaseAddressSelection() bool {
+	return e.lowpc == ^uint64(0)
+}
+
+func loclistPrint(off int64, cu *dwarf.Entry) string {
+	var buf bytes.Buffer
+	DebugLoc.Seek(int(off))
+	
+	var base uint64
+	curange, _ := Dwarf.Ranges(cu)
+	if len(curange) > 0 {
+		base = curange[0][0]
+	}
+	
+	var e loclistEntry
+	for DebugLoc.Next(&e) {
+		if e.BaseAddressSelection() {
+			fmt.Fprintf(&buf, "Base address: %#x\n", e.highpc)
+			base = e.highpc
+		} else {
+			fmt.Fprintf(&buf, "%#x %#x ", e.lowpc+base, e.highpc+base)
+			op.PrettyPrint(&buf, e.instr)
+			fmt.Fprintf(&buf, "\n")
+		}
+	}
+	return buf.String()
+}
+
+var compileUnits []*dwarf.Entry
+
 func findSymbols() {
 	rdr := Dwarf.Reader()
 	for {
@@ -201,6 +301,8 @@ func findSymbols() {
 			break
 		}
 		switch e.Tag {
+		case dwarf.TagCompileUnit:
+			compileUnits = append(compileUnits, e)
 		case dwarf.TagSubprogram:
 			addr, okAddr := e.Val(dwarf.AttrLowpc).(uint64)
 			name, okName := e.Val(dwarf.AttrName).(string)
@@ -242,14 +344,34 @@ func findSymbols() {
 	})
 }
 
+func findCompileUnit(e *EntryNode) *dwarf.Entry {
+	if len(e.Ranges) <= 0 {
+		return nil
+	}
+	pc := e.Ranges[0][0]
+	
+	for i := range compileUnits {
+		ranges, _ := Dwarf.Ranges(compileUnits[i])
+		for _, rng := range ranges {
+			if pc >= rng[0] && pc < rng[1] {
+				return compileUnits[i]
+			}
+		}
+	}
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
 
 	for _, fn := range []openFn{openPE, openElf, openMacho} {
-		Dwarf, TextStart, TextData = fn(os.Args[1])
+		var ld []byte
+		Dwarf, TextStart, TextData, ld = fn(os.Args[1])
 		if Dwarf != nil {
+			DebugLoc.data = ld
+			DebugLoc.ptrSz = 8
 			break
 		}
 	}
