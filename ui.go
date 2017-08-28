@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"debug/dwarf"
 	"fmt"
 	"html"
@@ -14,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"bytes"
-	
+
+	"github.com/derekparker/delve/pkg/dwarf/frame"
 	"github.com/derekparker/delve/pkg/dwarf/op"
 )
 
@@ -50,7 +51,9 @@ var funcMap = template.FuncMap{
 	"EntryNodeField": func(f *dwarf.Field) template.HTML {
 		panic("EntryNodeField not replaced")
 	},
-	"FmtRange": fmtRange,
+	"FmtRange":      fmtRange,
+	"FmtFrameInstr": fmtFrameInstr,
+	"IsFrameEntry":  isFrameEntry,
 }
 
 func fmtEntryNodeHeader(e *dwarf.Entry) template.HTML {
@@ -92,6 +95,21 @@ func fmtRange(f [2]uint64) template.HTML {
 	return template.HTML(fmt.Sprintf("%x..%x", f[0], f[1]))
 }
 
+func isFrameEntry(f interface{}) bool {
+	switch f.(type) {
+	case *frame.FrameDescriptionEntry:
+		return true
+	case *frame.CommonInformationEntry:
+		return false
+	default:
+		panic(fmt.Errorf("unknown type %T", f))
+	}
+}
+
+func fmtFrameInstr(instr []byte) string {
+	return PrettyPrint(instr)
+}
+
 var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype html>
 <html>
 	<head>
@@ -122,7 +140,7 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 	<body>
 		{{with $first := (index . 0)}}
 			{{if $first.IsFunction}}
-				<a href='/{{$first.E.Offset | printf "%x"}}/disassemble'>DISASSEMBLE</a>
+				<a href='/disassemble/{{$first.E.Offset | printf "%x"}}'>DISASSEMBLE</a>&nbsp;|&nbsp;<a href='/frame/{{$first.E.Offset | printf "%x"}}'>DEBUG FRAME ENTRIES</a>
 			{{end}}
 		{{end}}
 		<p><input type='checkbox' onclick='javascript:toggleLoclists()'></input>&nbsp;Show loclists</p>
@@ -153,24 +171,139 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 {{end}}
 `))
 
-func allHandler(w http.ResponseWriter, r *http.Request) {
-	var off dwarf.Offset
+var frtmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype html>
+<html>
+	<head>
+		<title>{{.Name}}</title>
+	</head>
+	<body>
+		Ranges:<br>
+		{{range .Ranges}}
+			&nbsp;&nbsp;{{FmtRange .}}
+		{{end}}
+		<hr/>
+		{{range .Frames}}
+			<tt>{{if IsFrameEntry .}}
+				{{template "frameDescriptionEntry" .}}
+			{{else}}
+				{{template "commonInformationEntry" .}}
+			{{end}}</tt>
+			<hr/>
+		{{end}}
+	</body>
+</html>
+
+{{define "commonInformationEntry"}}
+<table class='cietbl'>
+<tr><td>Length</td><td>{{.Length}}</td></tr>
+<tr><td>CIE Id</td><td>{{.CIE_id}}</td></tr>
+<tr><td>Version</td><td>{{.Version}}</td></tr>
+<tr><td>Augmentation</td><td>{{.Augmentation}}</td></tr>
+<tr><td>Code Alignment Factor</td><td>{{.CodeAlignmentFactor}}</td></tr>
+<tr><td>Data Alignment Factor</td><td>{{.DataAlignmentFactor}}</td></tr>
+<tr><td>Return Address Register</td><td>{{.ReturnAddressRegister}}</td></tr>
+</table>
+<pre>{{.InitialInstructions | FmtFrameInstr }}</pre>
+{{end}}
+
+{{define "frameDescriptionEntry"}}
+<table class='fdetbl'>
+<tr><td>Length</td><td>{{.Length}}</td></tr>
+<tr><td>CIE</td><td>{{.CIE}}</td></tr>
+<tr><td>Begin</td><td>{{.Begin | printf "%#x"}}</td></tr>
+<tr><td>End</td><td>{{.End | printf "%#x"}}</td></tr>
+</table>
+<pre>{{.Instructions | FmtFrameInstr}}</pre>
+{{end}}
+
+`))
+
+func offset(r *http.Request) dwarf.Offset {
 	v := strings.Split(r.URL.Path, "/")
-	d := false
-	for i, x := range v {
+	for _, x := range v {
 		if len(x) != 0 {
 			n, err := strconv.ParseUint(x, 16, 64)
-			if err != nil {
-				return
-			}
-			off = dwarf.Offset(n)
-			if i+1 < len(v) && v[i+1] == "disassemble" {
-				d = true
-				break
+			if err == nil {
+				return dwarf.Offset(n)
 			}
 		}
 	}
+	return 0
+}
 
+func disassembleHandler(w http.ResponseWriter, r *http.Request) {
+	off := offset(r)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	rdr := Dwarf.Reader()
+	rdr.Seek(off)
+	entryNode, _ := toEntryNode(rdr)
+
+	rdr.Seek(0)
+	var cu *dwarf.Entry
+	for {
+		e, err := rdr.Next()
+		must(err)
+		if e == nil {
+			break
+		}
+		if e.Tag == dwarf.TagCompileUnit {
+			cu = e
+		}
+		if e.Offset == entryNode.E.Offset {
+			break
+		}
+	}
+	disassemble(w, entryNode, cu)
+}
+
+func rangesOverlap(a, b [2]uint64) bool {
+	return a[0] <= b[1] && b[0] <= a[1]
+}
+
+func frameHandler(w http.ResponseWriter, r *http.Request) {
+	off := offset(r)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	rdr := Dwarf.Reader()
+	rdr.Seek(off)
+	entryNode, _ := toEntryNode(rdr)
+
+	var frames []interface{}
+	var cmn *frame.CommonInformationEntry
+	for _, frame := range DebugFrame {
+		frameRng := [2]uint64{frame.Begin(), frame.End()}
+		o := false
+		for _, rng := range entryNode.Ranges {
+			if rangesOverlap(rng, frameRng) {
+				o = true
+				break
+			}
+		}
+		if o {
+			if frame.CIE != cmn {
+				frames = append(frames, frame.CIE)
+				cmn = frame.CIE
+			}
+			frames = append(frames, frame)
+		}
+	}
+
+	name, _ := entryNode.E.Val(dwarf.AttrName).(string)
+
+	must(frtmpl.Execute(w, struct {
+		Name   string
+		Ranges [][2]uint64
+		Frames []interface{}
+	}{Name: name, Ranges: entryNode.Ranges, Frames: frames}))
+}
+
+func allHandler(w http.ResponseWriter, r *http.Request) {
+	off := offset(r)
 	root := off == 0
 
 	mu.Lock()
@@ -194,34 +327,11 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		entryNode, addOffs := toEntryNode(rdr)
 		stack = append(stack, addOffs...)
 		nodes = append(nodes, entryNode)
-		if d {
-			break
-		}
 		if root {
 			if e, _ := rdr.Next(); e != nil {
 				stack = append(stack, e.Offset)
 			}
 		}
-	}
-
-	if d {
-		rdr.Seek(0)
-		var cu *dwarf.Entry
-		for {
-			e, err := rdr.Next()
-			must(err)
-			if e == nil {
-				break
-			}
-			if e.Tag == dwarf.TagCompileUnit {
-				cu = e
-			}
-			if e.Offset == nodes[0].E.Offset {
-				break
-			}
-		}
-		disassemble(w, nodes[0], cu)
-		return
 	}
 
 	must(tmpl.Funcs(template.FuncMap{
@@ -231,6 +341,8 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serve() {
+	http.HandleFunc("/frame/", handlerWrapper(frameHandler))
+	http.HandleFunc("/disassemble/", handlerWrapper(disassembleHandler))
 	http.HandleFunc("/", handlerWrapper(allHandler))
 
 	s := &http.Server{

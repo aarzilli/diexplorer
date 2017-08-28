@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"debug/dwarf"
 	"debug/elf"
 	"debug/macho"
@@ -10,8 +11,8 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"bytes"
-	
+
+	"github.com/derekparker/delve/pkg/dwarf/frame"
 	"github.com/derekparker/delve/pkg/dwarf/op"
 )
 
@@ -19,6 +20,7 @@ var Dwarf *dwarf.Data
 var TextStart uint64
 var TextData []byte
 var DebugLoc loclistReader
+var DebugFrame frame.FrameDescriptionEntries
 var Symbols []Sym
 var mu sync.Mutex
 
@@ -38,15 +40,16 @@ func must(err error) {
 	}
 }
 
-type openFn func(string) (dwarf *dwarf.Data, textStart uint64, textData []byte, locData []byte)
+type openFn func(string)
 
-func openPE(path string) (*dwarf.Data, uint64, []byte, []byte) {
+func openPE(path string) {
 	file, _ := pe.Open(path)
 	if file == nil {
-		return nil, 0, nil, nil
+		return
 	}
 	fmt.Fprintf(os.Stderr, "Found PE executable\n")
-	dwarf, err := file.DWARF()
+	var err error
+	Dwarf, err = file.DWARF()
 	must(err)
 
 	var imageBase uint64
@@ -62,59 +65,76 @@ func openPE(path string) (*dwarf.Data, uint64, []byte, []byte) {
 	if sect == nil {
 		panic(fmt.Errorf("text section not found"))
 	}
-	textStart := imageBase + uint64(sect.VirtualAddress)
-	textData, err := sect.Data()
+	TextStart = imageBase + uint64(sect.VirtualAddress)
+	TextData, err = sect.Data()
 	must(err)
-	var locData []byte
 	if locSec := file.Section(".debug_loc"); locSec != nil {
-		locData, _ = locSec.Data()
+		locData, _ := locSec.Data()
+		DebugLoc.data = locData
+		DebugLoc.ptrSz = 8
 	}
-	return dwarf, textStart, textData, locData
+	if frameSec := file.Section(".debug_frame"); frameSec != nil {
+		data, _ := frameSec.Data()
+		DebugFrame = frame.Parse(data, binary.LittleEndian)
+	}
+	return
 }
 
-func openMacho(path string) (*dwarf.Data, uint64, []byte, []byte) {
+func openMacho(path string) {
 	file, _ := macho.Open(path)
 	if file == nil {
-		return nil, 0, nil, nil
+		return
 	}
 	fmt.Fprintf(os.Stderr, "Found Macho-O executable\n")
-	dwarf, err := file.DWARF()
+	var err error
+	Dwarf, err = file.DWARF()
 	must(err)
 
 	sect := file.Section("__text")
 	if sect == nil {
 		panic(fmt.Errorf("text section not found"))
 	}
-	textStart := sect.Addr
-	textData, err := sect.Data()
+	TextStart = sect.Addr
+	TextData, err = sect.Data()
 	must(err)
-	var locData []byte
 	if locSec := file.Section("__debug_loc"); locSec != nil {
-		locData, _ = locSec.Data()
+		locData, _ := locSec.Data()
+		DebugLoc.data = locData
+		DebugLoc.ptrSz = 8
 	}
-	return dwarf, textStart, textData, locData
+	if frameSec := file.Section("__debug_frame"); frameSec != nil {
+		data, _ := frameSec.Data()
+		DebugFrame = frame.Parse(data, binary.LittleEndian)
+	}
+	return
 }
 
-func openElf(path string) (*dwarf.Data, uint64, []byte, []byte) {
+func openElf(path string) {
 	file, _ := elf.Open(path)
 	if file == nil {
-		return nil, 0, nil, nil
+		return
 	}
 	fmt.Fprintf(os.Stderr, "Found ELF executable\n")
-	dwarf, err := file.DWARF()
+	var err error
+	Dwarf, err = file.DWARF()
 	must(err)
 	sect := file.Section(".text")
 	if sect == nil {
 		panic(fmt.Errorf("text section not found"))
 	}
-	textStart := sect.Addr
-	textData, err := sect.Data()
+	TextStart = sect.Addr
+	TextData, err = sect.Data()
 	must(err)
-	var locData []byte
 	if locSec := file.Section(".debug_loc"); locSec != nil {
-		locData, _ = locSec.Data()
+		locData, _ := locSec.Data()
+		DebugLoc.data = locData
+		DebugLoc.ptrSz = 8
 	}
-	return dwarf, textStart, textData, locData
+	if frameSec := file.Section(".debug_frame"); frameSec != nil {
+		data, _ := frameSec.Data()
+		DebugFrame = frame.Parse(data, binary.LittleEndian)
+	}
+	return
 }
 
 type EntryNode struct {
@@ -269,13 +289,13 @@ func (e *loclistEntry) BaseAddressSelection() bool {
 func loclistPrint(off int64, cu *dwarf.Entry) string {
 	var buf bytes.Buffer
 	DebugLoc.Seek(int(off))
-	
+
 	var base uint64
 	curange, _ := Dwarf.Ranges(cu)
 	if len(curange) > 0 {
 		base = curange[0][0]
 	}
-	
+
 	var e loclistEntry
 	for DebugLoc.Next(&e) {
 		if e.BaseAddressSelection() {
@@ -349,7 +369,7 @@ func findCompileUnit(e *EntryNode) *dwarf.Entry {
 		return nil
 	}
 	pc := e.Ranges[0][0]
-	
+
 	for i := range compileUnits {
 		ranges, _ := Dwarf.Ranges(compileUnits[i])
 		for _, rng := range ranges {
@@ -367,11 +387,8 @@ func main() {
 	}
 
 	for _, fn := range []openFn{openPE, openElf, openMacho} {
-		var ld []byte
-		Dwarf, TextStart, TextData, ld = fn(os.Args[1])
+		fn(os.Args[1])
 		if Dwarf != nil {
-			DebugLoc.data = ld
-			DebugLoc.ptrSz = 8
 			break
 		}
 	}

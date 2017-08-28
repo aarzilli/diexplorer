@@ -1,0 +1,44 @@
+// Syntax:
+// <op name> <high 2 bits> <low 6 bits> <arguments>
+//
+// - <op name> name of opcode
+// - <high 2 bits> hexadecimal value of the 2 high bits of the opcode
+// - <low 6 bits> hexadecimal value of the 6 low bits of the opcode, 'a' if they should be printed as an argument
+// - <arguments> string representing the arguments of the opcode, one character per argument
+//      s	SLEB128
+//      u	ULEB128
+//      1	8-bit argument
+//      2	16-bit argument
+//      4	32-bit argument
+//	8	64-bit argument
+//      B	a ULEB128 size followed by a block of that size
+
+
+DW_CFA_advance_loc		0x1	a	""
+DW_CFA_offset			0x2	a	"u"
+DW_CFA_restore			0x3	a	""
+DW_CFA_nop			0	0	""
+DW_CFA_set_loc			0	0x01	"8"
+DW_CFA_advance_loc1		0	0x02	"1"
+DW_CFA_advance_loc2		0	0x03	"2"
+DW_CFA_advance_loc4		0	0x04	"4"
+DW_CFA_offset_extended		0	0x05	"uu"
+DW_CFA_restore_extended		0	0x06	"u"
+DW_CFA_undefined		0	0x07	"u"
+DW_CFA_same_value		0	0x08	"u"
+DW_CFA_register			0	0x09	"uu"
+DW_CFA_remember_state		0	0x0a	""
+DW_CFA_restore_state		0	0x0b	""
+DW_CFA_def_cfa			0	0x0c	"uu"
+DW_CFA_def_cfa_register		0	0x0d	"u"
+DW_CFA_def_cfa_offset		0	0x0e	"u"
+DW_CFA_def_cfa_expression	0	0x0f	"B"
+DW_CFA_expression		0	0x10	"uB"
+DW_CFA_offset_extended_sf	0	0x11	"us"
+DW_CFA_def_cfa_sf		0	0x12	"us"
+DW_CFA_def_cfa_offset_sf	0	0x13	"s"
+DW_CFA_val_offset		0	0x14	"uu"
+DW_CFA_val_offset_sf		0	0x15	"us"
+DW_CFA_val_expression		0	0x16	"uB"
+DW_CFA_lo_user			0	0x1c	""
+DW_CFA_hi_user			0	0x3f	""

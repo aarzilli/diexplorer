@@ -3,8 +3,20 @@
 	"ignore": "test",
 	"package": [
 		{
+			"checksumSHA1": "MP+RMblj0BIn3mK8QIQIXHzWGXk=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/frame",
+			"revision": "7fd0ba24ea2420f3ef793d6fb847de09eefd98c7",
+			"revisionTime": "2017-08-25T09:28:08Z"
+		},
+		{
 			"checksumSHA1": "FO2MBMN+dtIgy5fQanxOcHSmVwg=",
 			"path": "github.com/derekparker/delve/pkg/dwarf/op",
+			"revision": "7fd0ba24ea2420f3ef793d6fb847de09eefd98c7",
+			"revisionTime": "2017-08-25T09:28:08Z"
+		},
+		{
+			"checksumSHA1": "/M3NFy1S8lVx98edZmNQJQRe5PI=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/util",
 			"revision": "7fd0ba24ea2420f3ef793d6fb847de09eefd98c7",
 			"revisionTime": "2017-08-25T09:28:08Z"
 		},
