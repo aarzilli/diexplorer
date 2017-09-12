@@ -3,10 +3,10 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "MP+RMblj0BIn3mK8QIQIXHzWGXk=",
+			"checksumSHA1": "f2ldr3n6IqPiE4i/3zITUBZshgY=",
 			"path": "github.com/derekparker/delve/pkg/dwarf/frame",
-			"revision": "7fd0ba24ea2420f3ef793d6fb847de09eefd98c7",
-			"revisionTime": "2017-08-25T09:28:08Z"
+			"revision": "648e7ba5224ede21de5f47aac55a769416fec2db",
+			"revisionTime": "2017-09-12T10:40:19Z"
 		},
 		{
 			"checksumSHA1": "FO2MBMN+dtIgy5fQanxOcHSmVwg=",

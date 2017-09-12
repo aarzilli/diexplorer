@@ -75,7 +75,7 @@ func openPE(path string) {
 	}
 	if frameSec := file.Section(".debug_frame"); frameSec != nil {
 		data, _ := frameSec.Data()
-		DebugFrame = frame.Parse(data, binary.LittleEndian)
+		DebugFrame = frame.Parse(data[:frameSec.VirtualSize], binary.LittleEndian)
 	}
 	return
 }
@@ -394,6 +394,6 @@ func main() {
 	}
 
 	findSymbols()
-
+	
 	serve()
 }
