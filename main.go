@@ -192,20 +192,6 @@ func toEntryNode(rdr *dwarf.Reader) (node *EntryNode, addOffs []dwarf.Offset) {
 			rdr.SkipChildren()
 
 			if e.Tag == 0 {
-				if node.E.Offset == 0 {
-					// append other compile units as additional offsets to print
-					for {
-						e, err := rdr.Next()
-						must(err)
-						if e == nil {
-							break
-						}
-
-						addOffs = append(addOffs, e.Offset)
-						rdr.SkipChildren()
-					}
-				}
-
 				break
 			}
 		}
@@ -213,18 +199,33 @@ func toEntryNode(rdr *dwarf.Reader) (node *EntryNode, addOffs []dwarf.Offset) {
 		return node, addOffs
 	}
 
-childrenLoop:
 	for {
 		n, a := toEntryNode(rdr)
 		addOffs = append(addOffs, a...)
 		node.Childs = append(node.Childs, n)
-		switch n.E.Tag {
-		case 0:
-			break childrenLoop
+		if n.E.Tag == 0 {
+			break
 		}
 	}
 
 	return node, addOffs
+}
+
+func countNodes(nodes []*EntryNode) int {
+	r := 1
+	for i := range nodes {
+		r += countNodes(nodes[i].Childs)
+	}
+	return r
+}
+
+func allCompileUnits(nodes []*EntryNode) bool {
+	for _, n := range nodes {
+		if n.E.Tag != dwarf.TagCompileUnit {
+			return false
+		}
+	}
+	return true
 }
 
 type loclistReader struct {
@@ -394,6 +395,6 @@ func main() {
 	}
 
 	findSymbols()
-	
+
 	serve()
 }

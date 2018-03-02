@@ -334,6 +334,14 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if allCompileUnits(nodes) && len(nodes) > 1 {
+		if countNodes(nodes) > 10000 {
+			for _, n := range nodes {
+				n.Childs = nil
+			}
+		}
+	}
+
 	must(tmpl.Funcs(template.FuncMap{
 		"EntryNodeField": func(f *dwarf.Field) template.HTML {
 			return fmtEntryNodeField(f, nodes)
