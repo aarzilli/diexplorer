@@ -124,6 +124,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 
 	file := "???"
 	line := 0
+	isstmt := false
 
 	fnname, _ := en.E.Val(dwarf.AttrName).(string)
 
@@ -177,7 +178,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 
 	// print disassembly
 	fmt.Fprintf(out, "<h3>Disassembly</h3>\n<tt><table id='disasstable'>\n")
-	fmt.Fprintf(out, "<tr><td>Pos</td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
+	fmt.Fprintf(out, "<tr><td>Pos</td><td>stmt</td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
 
@@ -200,15 +201,24 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 			if lne.Address == pc {
 				file = lne.File.Name
 				line = lne.Line
+				isstmt = lne.IsStmt
+			} else {
+				isstmt = false
 			}
 		} else {
 			file = "?"
 			line = 0
+			isstmt = false
 		}
 
 		fmt.Fprintf(out, "<tr class=\"%s\">", strings.Join(findScopes(en, pc), " "))
+		
+		isstmtstr := ""
+		if isstmt {
+			isstmtstr = "S"
+		}
 
-		fmt.Fprintf(out, "<td>%s:%d</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, pc, TextData[i:i+size], html.EscapeString(text))
+		fmt.Fprintf(out, "<td>%s:%d</td><td>%s</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, isstmtstr, pc, TextData[i:i+size], html.EscapeString(text))
 
 		fmt.Fprintf(out, "</tr>\n")
 		pc += size
