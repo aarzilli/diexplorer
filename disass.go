@@ -125,6 +125,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	file := "???"
 	line := 0
 	isstmt := false
+	prologueend := false
 
 	fnname, _ := en.E.Val(dwarf.AttrName).(string)
 
@@ -202,23 +203,29 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 				file = lne.File.Name
 				line = lne.Line
 				isstmt = lne.IsStmt
+				prologueend = lne.PrologueEnd
 			} else {
 				isstmt = false
+				prologueend = false
 			}
 		} else {
 			file = "?"
 			line = 0
 			isstmt = false
+			prologueend = false
 		}
 
 		fmt.Fprintf(out, "<tr class=\"%s\">", strings.Join(findScopes(en, pc), " "))
-		
-		isstmtstr := ""
+
+		flagstr := ""
 		if isstmt {
-			isstmtstr = "S"
+			flagstr = "S"
+		}
+		if prologueend {
+			flagstr += "P"
 		}
 
-		fmt.Fprintf(out, "<td>%s:%d</td><td>%s</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, isstmtstr, pc, TextData[i:i+size], html.EscapeString(text))
+		fmt.Fprintf(out, "<td>%s:%d</td><td>%s</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, flagstr, pc, TextData[i:i+size], html.EscapeString(text))
 
 		fmt.Fprintf(out, "</tr>\n")
 		pc += size
