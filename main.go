@@ -68,14 +68,12 @@ func openPE(path string) {
 	TextStart = imageBase + uint64(sect.VirtualAddress)
 	TextData, err = sect.Data()
 	must(err)
-	if locSec := file.Section(".debug_loc"); locSec != nil {
-		locData, _ := locSec.Data()
+	if locData, _ := GetDebugSectionPE(file, "loc"); locData != nil {
 		DebugLoc.data = locData
 		DebugLoc.ptrSz = 8
 	}
-	if frameSec := file.Section(".debug_frame"); frameSec != nil {
-		data, _ := frameSec.Data()
-		DebugFrame = frame.Parse(data[:frameSec.VirtualSize], binary.LittleEndian)
+	if frameData, _ := GetDebugSectionPE(file, "frame"); frameData != nil {
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
 	}
 	return
 }
@@ -97,14 +95,12 @@ func openMacho(path string) {
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
-	if locSec := file.Section("__debug_loc"); locSec != nil {
-		locData, _ := locSec.Data()
+	if locData, _ := GetDebugSectionMacho(file, "loc"); locData != nil {
 		DebugLoc.data = locData
 		DebugLoc.ptrSz = 8
 	}
-	if frameSec := file.Section("__debug_frame"); frameSec != nil {
-		data, _ := frameSec.Data()
-		DebugFrame = frame.Parse(data, binary.LittleEndian)
+	if frameData, _ := GetDebugSectionMacho(file, "frame"); frameData != nil {
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
 	}
 	return
 }
@@ -125,14 +121,12 @@ func openElf(path string) {
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
-	if locSec := file.Section(".debug_loc"); locSec != nil {
-		locData, _ := locSec.Data()
+	if locData, _ := GetDebugSectionElf(file, "loc"); locData != nil {
 		DebugLoc.data = locData
 		DebugLoc.ptrSz = 8
 	}
-	if frameSec := file.Section(".debug_frame"); frameSec != nil {
-		data, _ := frameSec.Data()
-		DebugFrame = frame.Parse(data, binary.LittleEndian)
+	if frameData, _ := GetDebugSectionElf(file, "frame"); frameData != nil {
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
 	}
 	return
 }
