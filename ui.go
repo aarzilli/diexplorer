@@ -65,10 +65,13 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 	case dwarf.ClassReference:
 		name := findReferenceName(f.Val.(dwarf.Offset), nodes)
 		return template.HTML(fmt.Sprintf("<td>%s</td><td><a href=\"#%x\">&lt;%x&gt;</a> (%s)</td>", f.Attr.String(), f.Val.(dwarf.Offset), f.Val.(dwarf.Offset), html.EscapeString(name)))
+
 	case dwarf.ClassAddress:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%#x</td>", f.Attr.String(), f.Val.(uint64)))
+
 	case dwarf.ClassString:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(strconv.Quote(f.Val.(string)))))
+
 	case dwarf.ClassExprLoc:
 		block, _ := f.Val.([]byte)
 		var out bytes.Buffer
@@ -76,6 +79,7 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(out.String())))
 	case dwarf.ClassLocListPtr:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
+
 	default:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(fmt.Sprint(f.Val))))
 	}
@@ -125,17 +129,6 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 			}
 		</style>
 		<script>
-			function toggleLoclists() {
-				var lls = document.getElementsByClassName("loclist")
-				for (var i = 0; i < lls.length; i++) {
-					if (lls[i].style["display"] == "none") {
-						lls[i].style["display"] = "block";
-					} else {
-						lls[i].style["display"] = "none";
-					}
-				}
-			}
-			
 			function toggleLoclist2(e) {
 				var el = e.parentElement.parentElement.getElementsByClassName("loclist")[0];
 				if (el.style["display"] == "none") {
@@ -149,10 +142,9 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 	<body>
 		{{with $first := (index . 0)}}
 			{{if $first.IsFunction}}
-				<a href='/disassemble/{{$first.E.Offset | printf "%x"}}'>DISASSEMBLE</a>&nbsp;|&nbsp;<a href='/frame/{{$first.E.Offset | printf "%x"}}'>DEBUG FRAME ENTRIES</a>
+				<a href='/frame/{{$first.E.Offset | printf "%x"}}'>DEBUG FRAME ENTRIES</a>
 			{{end}}
 		{{end}}
-		<p><input type='checkbox' onclick='javascript:toggleLoclists()'></input>&nbsp;Show loclists</p>
 		{{range .}}<tt>
 			{{template "entryNode" .}}
 		</tt><hr>{{end}}
@@ -168,7 +160,14 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 		{{end}}
 		</table>
 		{{if .Ranges}}
-			&nbsp;&nbsp;Ranges:<br>
+			&nbsp;&nbsp;Ranges: 
+			{{if .IsFunction}} 
+			{{else}}
+				(<input type='checkbox' id='lb{{.E.Offset | printf "%x" }}' onclick='javascript:window.parent.parent.frames[1].repaint()'></input>highlighted)
+			{{end}}
+			
+			<br>
+			
 			{{range .Ranges}}
 				&nbsp;&nbsp;&nbsp;&nbsp;{{FmtRange .}}<br>
 			{{end}}
@@ -180,7 +179,7 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 {{end}}
 `))
 
-var frtmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype html>
+var frtmpl = template.Must(template.New("debug_frame").Funcs(funcMap).Parse(`<!doctype html>
 <html>
 	<head>
 		<title>{{.Name}}</title>
@@ -225,6 +224,15 @@ var frtmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype h
 <pre>{{.Instructions | FmtFrameInstr}}</pre>
 {{end}}
 
+`))
+
+var framesetTmpl = template.Must(template.New("fn").Funcs(funcMap).Parse(`<!doctype html>
+<!doctype html>
+
+<frameset cols="50%,*">
+	<frame src='/{{. | printf "%x" }}?std=1'>
+	<frame src='/disassemble/{{. | printf "%x"}}'>
+</frameset>
 `))
 
 func offset(r *http.Request) dwarf.Offset {
@@ -312,6 +320,7 @@ func frameHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func allHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
 	off := offset(r)
 	root := off == 0
 
@@ -319,6 +328,16 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 	defer mu.Unlock()
 
 	rdr := Dwarf.Reader()
+
+	// Check if this is a subprogram to serve a different type of page
+	if r.Form.Get("std") != "1" {
+		rdr.Seek(off)
+		rootEntry, _ := toEntryNode(rdr)
+		if rootEntry != nil && rootEntry.E.Tag == dwarf.TagSubprogram {
+			must(framesetTmpl.Execute(w, off))
+			return
+		}
+	}
 
 	nodes := []*EntryNode{}
 	stack := []dwarf.Offset{off}
@@ -369,7 +388,7 @@ func serve() {
 		MaxHeaderBytes: 1 << 20,
 	}
 
-	nl, _ := net.Listen("tcp", "127.0.0.1:0")
+	nl, _ := net.Listen("tcp", ListenAddr)
 	port := ":" + strconv.Itoa(nl.Addr().(*net.TCPAddr).Port)
 	fmt.Fprintf(os.Stderr, "Listening on: %s\n", port)
 

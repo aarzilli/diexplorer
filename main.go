@@ -24,13 +24,15 @@ var DebugFrame frame.FrameDescriptionEntries
 var Symbols []Sym
 var mu sync.Mutex
 
+var ListenAddr = "127.0.0.1:0"
+
 type Sym struct {
 	Name string
 	Addr uint64
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: diexplorer <executable file>\n")
+	fmt.Fprintf(os.Stderr, "usage: diexplorer <executable file> [listen addr]\n")
 	os.Exit(1)
 }
 
@@ -255,6 +257,7 @@ func (rdr *loclistReader) oneAddr() uint64 {
 }
 
 func (rdr *loclistReader) Next(e *loclistEntry) bool {
+	e.seek = rdr.cur
 	e.lowpc = rdr.oneAddr()
 	e.highpc = rdr.oneAddr()
 
@@ -273,6 +276,7 @@ func (rdr *loclistReader) Next(e *loclistEntry) bool {
 }
 
 type loclistEntry struct {
+	seek          int
 	lowpc, highpc uint64
 	instr         []byte
 }
@@ -297,6 +301,7 @@ func loclistPrint(off int64, cu *dwarf.Entry) string {
 			fmt.Fprintf(&buf, "Base address: %#x\n", e.highpc)
 			base = e.highpc
 		} else {
+			fmt.Fprintf(&buf, "<input type='checkbox' id='ll%x' onclick='javascript:window.parent.parent.frames[1].repaint()'></input>", e.seek)
 			fmt.Fprintf(&buf, "%#x %#x ", e.lowpc+base, e.highpc+base)
 			op.PrettyPrint(&buf, e.instr)
 			fmt.Fprintf(&buf, "\n")
@@ -380,6 +385,10 @@ func findCompileUnit(e *EntryNode) *dwarf.Entry {
 func main() {
 	if len(os.Args) < 2 {
 		usage()
+	}
+
+	if len(os.Args) >= 3 {
+		ListenAddr = os.Args[2]
 	}
 
 	for _, fn := range []openFn{openPE, openElf, openMacho} {

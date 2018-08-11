@@ -62,6 +62,16 @@ func findScopes(en *EntryNode, pc uint64) []string {
 	return r
 }
 
+func findScopesAndLoclists(en *EntryNode, pc uint64, loclistEntries []loclistEntry) []string {
+	r := findScopes(en, pc)
+	for _, lle := range loclistEntries {
+		if pc >= lle.lowpc && pc < lle.highpc {
+			r = append(r, fmt.Sprintf("ll%x", lle.seek))
+		}
+	}
+	return r
+}
+
 var colors = []string{
 	"rgb(245,245,245)",
 	"rgb(220,220,220)",
@@ -100,18 +110,50 @@ var colors = []string{
 	"rgb(216,191,216)",
 }
 
-func printColors(out io.Writer, en *EntryNode, pi *int) {
+func printColor(out io.Writer, name string, pi *int) {
+	fmt.Fprintf(out, "%q: %q,\n", name, colors[*pi])
+	*pi = (*pi + 1) % len(colors)
+
+}
+
+func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclistEntry) []loclistEntry {
 	for i := range en.Childs {
 		switch en.Childs[i].E.Tag {
 		case dwarf.TagFormalParameter, dwarf.TagVariable, 0:
 			// nothing to do
 		default:
-			fmt.Fprintf(out, "\"lb%x\": %q,\n", en.Childs[i].E.Offset, colors[*pi])
-			*pi = (*pi + 1) % len(colors)
-			printColors(out, en.Childs[i], pi)
+			printColor(out, fmt.Sprintf("lb%x", en.Childs[i].E.Offset), pi)
+			loclistEntries = printColors(out, en.Childs[i], pi, loclistEntries)
+		}
+
+		for j := range en.Childs[i].E.Field {
+			field := en.Childs[i].E.Field[j]
+			if field.Class != dwarf.ClassLocListPtr {
+				continue
+			}
+
+			DebugLoc.Seek(int(field.Val.(int64)))
+
+			var base uint64
+			curange, _ := Dwarf.Ranges(findCompileUnit(en))
+			if len(curange) > 0 {
+				base = curange[0][0]
+			}
+
+			var lle loclistEntry
+			for DebugLoc.Next(&lle) {
+				if lle.BaseAddressSelection() {
+					base = lle.highpc
+				} else {
+					lle.lowpc += base
+					lle.highpc += base
+					printColor(out, fmt.Sprintf("ll%x", lle.seek), pi)
+					loclistEntries = append(loclistEntries, lle)
+				}
+			}
 		}
 	}
-
+	return loclistEntries
 }
 
 func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
@@ -143,7 +185,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 `)
 
 	var i int
-	printColors(out, en, &i)
+	loclistEntries := printColors(out, en, &i, nil)
 
 	fmt.Fprintf(out, `
 			};
@@ -154,7 +196,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 					var color = "";
 					for (var j = row.classList.length-1; j >= 0; j--) {
 						console.log(row.classList[j]);
-						var cb = document.getElementById(row.classList[j])
+						var cb = window.parent.parent.frames[0].document.getElementById(row.classList[j])
 						if (cb != null && cb.checked) {
 							color = colors[row.classList[j]];
 							break;
@@ -173,13 +215,9 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 		<h3>Function %q</h3>
 `, fnname)
 
-	// print lexical blocks synthesis
-	fmt.Fprintf(out, "<h3>Lexical Block synthesis</h3>\n")
-	lexicalBlockSynthesis(out, en)
-
 	// print disassembly
 	fmt.Fprintf(out, "<h3>Disassembly</h3>\n<tt><table id='disasstable'>\n")
-	fmt.Fprintf(out, "<tr><td>Pos</td><td>stmt</td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
+	fmt.Fprintf(out, "<tr><td>Pos</td><td><a href='#flaghelp'>flags</a></td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
 
@@ -215,7 +253,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 			prologueend = false
 		}
 
-		fmt.Fprintf(out, "<tr class=\"%s\">", strings.Join(findScopes(en, pc), " "))
+		fmt.Fprintf(out, "<tr class=\"%s\">", strings.Join(findScopesAndLoclists(en, pc, loclistEntries), " "))
 
 		flagstr := ""
 		if isstmt {
@@ -230,5 +268,5 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 		fmt.Fprintf(out, "</tr>\n")
 		pc += size
 	}
-	fmt.Fprintf(out, "</table></tt>\n</body>\n")
+	fmt.Fprintf(out, "</table></tt>\n<a name='flaghelp'></a><h3>Flag Help</h3>S - statement<br>P - end of prologue<br></body>\n")
 }
