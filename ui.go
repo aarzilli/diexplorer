@@ -75,7 +75,7 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 		op.PrettyPrint(&out, block)
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(out.String())))
 	case dwarf.ClassLocListPtr:
-		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
+		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
 	default:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(fmt.Sprint(f.Val))))
 	}
@@ -133,6 +133,15 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 					} else {
 						lls[i].style["display"] = "none";
 					}
+				}
+			}
+			
+			function toggleLoclist2(e) {
+				var el = e.parentElement.parentElement.getElementsByClassName("loclist")[0];
+				if (el.style["display"] == "none") {
+					el.style["display"] = "block";
+				} else {
+					el.style["display"] = "none";
 				}
 			}
 		</script>

@@ -342,7 +342,8 @@ func findSymbols() {
 				case 8:
 					addr = binary.LittleEndian.Uint64(loc[1:])
 				default:
-					panic(fmt.Errorf("wrong location %v", loc))
+					// C bullshit
+					//panic(fmt.Errorf("wrong location %v", loc))
 				}
 				Symbols = append(Symbols, Sym{
 					Name: name,
