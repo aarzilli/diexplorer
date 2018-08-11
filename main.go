@@ -143,6 +143,29 @@ func (en *EntryNode) IsFunction() bool {
 	return en.E.Tag == dwarf.TagSubprogram
 }
 
+func (entryNode *EntryNode) Frames() []interface{} {
+	var frames []interface{}
+	var cmn *frame.CommonInformationEntry
+	for _, frame := range DebugFrame {
+		frameRng := [2]uint64{frame.Begin(), frame.End()}
+		o := false
+		for _, rng := range entryNode.Ranges {
+			if rangesOverlap(rng, frameRng) {
+				o = true
+				break
+			}
+		}
+		if o {
+			if frame.CIE != cmn {
+				frames = append(frames, frame.CIE)
+				cmn = frame.CIE
+			}
+			frames = append(frames, frame)
+		}
+	}
+	return frames
+}
+
 func toEntryNode(rdr *dwarf.Reader) (node *EntryNode, addOffs []dwarf.Offset) {
 	e, err := rdr.Next()
 	must(err)

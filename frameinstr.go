@@ -11,11 +11,13 @@ import (
 
 //go:generate go run scripts/gen-frame-opcodes.go ./frame_opcodes.txt ./frame_opcodes.go
 
-func PrettyPrint(instrs []uint8) string {
+func PrettyPrintFrameInstr(instrs []uint8, lowpc uint64) string {
 	in := bytes.NewBuffer(instrs)
 	out := bytes.NewBuffer([]byte{})
 
 	fmt.Fprintf(out, "\t")
+
+	loc := lowpc
 
 	for {
 		opcode, err := in.ReadByte()
@@ -26,14 +28,19 @@ func PrettyPrint(instrs []uint8) string {
 		high2 := (opcode & 0xc0) >> 6
 		low6 := opcode & 0x3f
 
-		found := false
-		if name, ok := frameOpcodeHigh2[high2]; ok {
-			found = true
+		name, found := frameOpcodeHigh2[high2]
+		if found {
 			opcode = opcode & 0xc0
 			fmt.Fprintf(out, "%s %#x ", name, low6)
-		} else if name, ok := frameOpcodeLow6[low6]; ok {
-			fmt.Fprintf(out, "%s ", name)
-			found = true
+			if name == "DW_CFA_advance_loc" {
+				loc += uint64(low6)
+				fmt.Fprintf(out, "to %#x ", loc)
+			}
+		} else {
+			name, found = frameOpcodeLow6[low6]
+			if found {
+				fmt.Fprintf(out, "%s ", name)
+			}
 		}
 		if !found {
 			fmt.Fprintf(out, "\n\t")
@@ -52,18 +59,34 @@ func PrettyPrint(instrs []uint8) string {
 				var x uint8
 				binary.Read(in, binary.LittleEndian, &x)
 				fmt.Fprintf(out, "%#x ", x)
+				if name == "DW_CFA_advance_loc1" {
+					loc += uint64(x)
+					fmt.Fprintf(out, "to %#x ", loc)
+				}
 			case '2':
 				var x uint16
 				binary.Read(in, binary.LittleEndian, &x)
 				fmt.Fprintf(out, "%#x ", x)
+				if name == "DW_CFA_advance_loc2" {
+					loc += uint64(x)
+					fmt.Fprintf(out, "to %#x ", loc)
+				}
 			case '4':
 				var x uint32
 				binary.Read(in, binary.LittleEndian, &x)
 				fmt.Fprintf(out, "%#x ", x)
+				if name == "DW_CFA_advance_loc4" {
+					loc += uint64(x)
+					fmt.Fprintf(out, "to %#x ", loc)
+				}
 			case '8':
 				var x uint64
 				binary.Read(in, binary.LittleEndian, &x)
 				fmt.Fprintf(out, "%#x ", x)
+				if name == "DW_CFA_set_loc" {
+					//TODO: set loc
+					fmt.Fprintf(out, "to %#x ", loc)
+				}
 			case 'B':
 				sz, _ := util.DecodeULEB128(in)
 				data := make([]byte, sz)

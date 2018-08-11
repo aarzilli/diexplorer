@@ -51,9 +51,14 @@ var funcMap = template.FuncMap{
 	"EntryNodeField": func(f *dwarf.Field) template.HTML {
 		panic("EntryNodeField not replaced")
 	},
-	"FmtRange":      fmtRange,
-	"FmtFrameInstr": fmtFrameInstr,
-	"IsFrameEntry":  isFrameEntry,
+	"FmtRange": fmtRange,
+	"FmtFrameInstr": func(instr []byte) string {
+		return fmtFrameInstr(instr, 0)
+	},
+	"FmtFDEInstr": func(fde *frame.FrameDescriptionEntry) string {
+		return fmtFrameInstr(fde.Instructions, fde.Begin())
+	},
+	"IsFrameEntry": isFrameEntry,
 }
 
 func fmtEntryNodeHeader(e *dwarf.Entry) template.HTML {
@@ -110,8 +115,8 @@ func isFrameEntry(f interface{}) bool {
 	}
 }
 
-func fmtFrameInstr(instr []byte) string {
-	return PrettyPrint(instr)
+func fmtFrameInstr(instr []byte, addr uint64) string {
+	return PrettyPrintFrameInstr(instr, addr)
 }
 
 var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype html>
@@ -142,12 +147,29 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 	<body>
 		{{with $first := (index . 0)}}
 			{{if $first.IsFunction}}
-				<a href='/frame/{{$first.E.Offset | printf "%x"}}'>DEBUG FRAME ENTRIES</a>
+				<a href="#frames">Debug Frame Entries</a><hr/>
 			{{end}}
 		{{end}}
+		
 		{{range .}}<tt>
 			{{template "entryNode" .}}
 		</tt><hr>{{end}}
+		{{with $first := (index . 0)}}
+			{{if $first.IsFunction}}
+				<hr/>
+				<h3><a name="frames"></a>Debug Frame Entries</h3>
+				{{range $first.Frames}}
+					<tt>{{if IsFrameEntry .}}
+						{{template "frameDescriptionEntry" .}}
+					{{else}}
+						{{template "commonInformationEntry" .}}
+					{{end}}</tt>
+					<hr/>
+				{{end}}
+				
+			{{end}}
+		{{end}}
+		
 	</body>
 </html>
 
@@ -177,36 +199,13 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 		{{end}}
 	</div>
 {{end}}
-`))
-
-var frtmpl = template.Must(template.New("debug_frame").Funcs(funcMap).Parse(`<!doctype html>
-<html>
-	<head>
-		<title>{{.Name}}</title>
-	</head>
-	<body>
-		Ranges:<br>
-		{{range .Ranges}}
-			&nbsp;&nbsp;{{FmtRange .}}
-		{{end}}
-		<hr/>
-		{{range .Frames}}
-			<tt>{{if IsFrameEntry .}}
-				{{template "frameDescriptionEntry" .}}
-			{{else}}
-				{{template "commonInformationEntry" .}}
-			{{end}}</tt>
-			<hr/>
-		{{end}}
-	</body>
-</html>
 
 {{define "commonInformationEntry"}}
 <table class='cietbl'>
 <tr><td>Length</td><td>{{.Length}}</td></tr>
 <tr><td>CIE Id</td><td>{{.CIE_id}}</td></tr>
 <tr><td>Version</td><td>{{.Version}}</td></tr>
-<tr><td>Augmentation</td><td>{{.Augmentation}}</td></tr>
+<tr><td>Augmentation</td><td>{{.Augmentation | printf "%q"}}</td></tr>
 <tr><td>Code Alignment Factor</td><td>{{.CodeAlignmentFactor}}</td></tr>
 <tr><td>Data Alignment Factor</td><td>{{.DataAlignmentFactor}}</td></tr>
 <tr><td>Return Address Register</td><td>{{.ReturnAddressRegister}}</td></tr>
@@ -217,13 +216,12 @@ var frtmpl = template.Must(template.New("debug_frame").Funcs(funcMap).Parse(`<!d
 {{define "frameDescriptionEntry"}}
 <table class='fdetbl'>
 <tr><td>Length</td><td>{{.Length}}</td></tr>
-<tr><td>CIE</td><td>{{.CIE}}</td></tr>
+<tr><td>CIE</td><td>{{.CIE.CIE_id}}</td></tr>
 <tr><td>Begin</td><td>{{.Begin | printf "%#x"}}</td></tr>
 <tr><td>End</td><td>{{.End | printf "%#x"}}</td></tr>
 </table>
-<pre>{{.Instructions | FmtFrameInstr}}</pre>
+<pre>{{. | FmtFDEInstr}}</pre>
 {{end}}
-
 `))
 
 var framesetTmpl = template.Must(template.New("fn").Funcs(funcMap).Parse(`<!doctype html>
@@ -278,45 +276,6 @@ func disassembleHandler(w http.ResponseWriter, r *http.Request) {
 
 func rangesOverlap(a, b [2]uint64) bool {
 	return a[0] <= b[1] && b[0] <= a[1]
-}
-
-func frameHandler(w http.ResponseWriter, r *http.Request) {
-	off := offset(r)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	rdr := Dwarf.Reader()
-	rdr.Seek(off)
-	entryNode, _ := toEntryNode(rdr)
-
-	var frames []interface{}
-	var cmn *frame.CommonInformationEntry
-	for _, frame := range DebugFrame {
-		frameRng := [2]uint64{frame.Begin(), frame.End()}
-		o := false
-		for _, rng := range entryNode.Ranges {
-			if rangesOverlap(rng, frameRng) {
-				o = true
-				break
-			}
-		}
-		if o {
-			if frame.CIE != cmn {
-				frames = append(frames, frame.CIE)
-				cmn = frame.CIE
-			}
-			frames = append(frames, frame)
-		}
-	}
-
-	name, _ := entryNode.E.Val(dwarf.AttrName).(string)
-
-	must(frtmpl.Execute(w, struct {
-		Name   string
-		Ranges [][2]uint64
-		Frames []interface{}
-	}{Name: name, Ranges: entryNode.Ranges, Frames: frames}))
 }
 
 func allHandler(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +336,6 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serve() {
-	http.HandleFunc("/frame/", handlerWrapper(frameHandler))
 	http.HandleFunc("/disassemble/", handlerWrapper(disassembleHandler))
 	http.HandleFunc("/", handlerWrapper(allHandler))
 

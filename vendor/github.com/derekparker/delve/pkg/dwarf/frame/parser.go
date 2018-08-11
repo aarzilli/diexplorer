@@ -86,7 +86,7 @@ func parseFDE(ctx *parseContext) parsefunc {
 
 func parseCIE(ctx *parseContext) parsefunc {
 	data := ctx.buf.Next(int(ctx.length))
-	buf := bytes.NewBuffer(data)
+	buf := bytes.NewBuffer(data[1:])
 	// parse version
 	ctx.common.Version = data[0]
 
