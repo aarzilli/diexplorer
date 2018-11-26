@@ -17,6 +17,7 @@ type CommonInformationEntry struct {
 	DataAlignmentFactor   int64
 	ReturnAddressRegister uint64
 	InitialInstructions   []byte
+	staticBase            uint64
 }
 
 // Represents a Frame Descriptor Entry in the
@@ -25,14 +26,14 @@ type FrameDescriptionEntry struct {
 	Length       uint32
 	CIE          *CommonInformationEntry
 	Instructions []byte
-	begin, end   uint64
+	begin, size  uint64
 	order        binary.ByteOrder
 }
 
 // Returns whether or not the given address is within the
 // bounds of this frame.
 func (fde *FrameDescriptionEntry) Cover(addr uint64) bool {
-	return (addr - fde.begin) < fde.end
+	return (addr - fde.begin) < fde.size
 }
 
 // Address of first location for this frame.
@@ -42,18 +43,12 @@ func (fde *FrameDescriptionEntry) Begin() uint64 {
 
 // Address of last location for this frame.
 func (fde *FrameDescriptionEntry) End() uint64 {
-	return fde.begin + fde.end
+	return fde.begin + fde.size
 }
 
 // Set up frame for the given PC.
 func (fde *FrameDescriptionEntry) EstablishFrame(pc uint64) *FrameContext {
 	return executeDwarfProgramUntilPC(fde, pc)
-}
-
-// Return the offset from the current SP that the return address is stored at.
-func (fde *FrameDescriptionEntry) ReturnAddressOffset(pc uint64) (frameOffset, returnAddressOffset int64) {
-	frame := fde.EstablishFrame(pc)
-	return frame.cfa.offset, frame.regs[fde.CIE.ReturnAddressRegister].offset
 }
 
 type FrameDescriptionEntries []*FrameDescriptionEntry
@@ -62,31 +57,21 @@ func NewFrameIndex() FrameDescriptionEntries {
 	return make(FrameDescriptionEntries, 0, 1000)
 }
 
-type NoFDEForPCError struct {
+type ErrNoFDEForPC struct {
 	PC uint64
 }
 
-func (err *NoFDEForPCError) Error() string {
+func (err *ErrNoFDEForPC) Error() string {
 	return fmt.Sprintf("could not find FDE for PC %#v", err.PC)
 }
 
 // Returns the Frame Description Entry for the given PC.
 func (fdes FrameDescriptionEntries) FDEForPC(pc uint64) (*FrameDescriptionEntry, error) {
 	idx := sort.Search(len(fdes), func(i int) bool {
-		if fdes[i].Cover(pc) {
-			return true
-		}
-		if fdes[i].LessThan(pc) {
-			return false
-		}
-		return true
+		return fdes[i].Cover(pc) || fdes[i].Begin() >= pc
 	})
-	if idx == len(fdes) {
-		return nil, &NoFDEForPCError{pc}
+	if idx == len(fdes) || !fdes[idx].Cover(pc) {
+		return nil, &ErrNoFDEForPC{pc}
 	}
 	return fdes[idx], nil
-}
-
-func (frame *FrameDescriptionEntry) LessThan(pc uint64) bool {
-	return frame.End() <= pc
 }

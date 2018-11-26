@@ -75,7 +75,7 @@ func openPE(path string) {
 		DebugLoc.ptrSz = 8
 	}
 	if frameData, _ := GetDebugSectionPE(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
 	}
 	return
 }
@@ -102,7 +102,7 @@ func openMacho(path string) {
 		DebugLoc.ptrSz = 8
 	}
 	if frameData, _ := GetDebugSectionMacho(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
 	}
 	return
 }
@@ -128,7 +128,7 @@ func openElf(path string) {
 		DebugLoc.ptrSz = 8
 	}
 	if frameData, _ := GetDebugSectionElf(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
 	}
 	return
 }
