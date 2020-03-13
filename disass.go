@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/x86/x86asm"
 )
 
@@ -156,6 +157,8 @@ func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclist
 	return loclistEntries
 }
 
+type DisassembleFunc func(data []uint8, pc uint64) (text string, size uint64)
+
 func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	startPC, endPC := en.Ranges[0][0], en.Ranges[0][1]
 	lnrdr, err := Dwarf.LineReader(ecu)
@@ -221,16 +224,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
 
-		// decode instruction
-		inst, err := x86asm.Decode(TextData[i:], 64)
-		size := uint64(inst.Len)
-		var text string
-		if err != nil || size == 0 || inst.Op == 0 {
-			size = 1
-			text = "?"
-		} else {
-			text = x86asm.GoSyntax(inst, pc, lookup)
-		}
+		text, size := DisassembleOne(TextData[i:], pc)
 
 		// find file:line
 		for lnevalid && lne.Address < pc {
@@ -269,4 +263,34 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 		pc += size
 	}
 	fmt.Fprintf(out, "</table></tt>\n<a name='flaghelp'></a><h3>Flag Help</h3>S - statement<br>P - end of prologue<br></body>\n")
+}
+
+func disassembleOneAmd64(data []uint8, pc uint64) (text string, size uint64) {
+	inst, err := x86asm.Decode(data, 64)
+	size = uint64(inst.Len)
+	if err != nil || size == 0 || inst.Op == 0 {
+		return "?", 1
+	}
+	text = x86asm.GoSyntax(inst, pc, lookup)
+	return text, size
+}
+
+func disassembleOne386(data []uint8, pc uint64) (text string, size uint64) {
+	inst, err := x86asm.Decode(data, 32)
+	size = uint64(inst.Len)
+	if err != nil || size == 0 || inst.Op == 0 {
+		return "?", 1
+	}
+	text = x86asm.GoSyntax(inst, pc, lookup)
+	return text, size
+}
+
+func disassembleOneArm64(data []uint8, pc uint64) (text string, size uint64) {
+	inst, err := arm64asm.Decode(data)
+	if err != nil {
+		return "?", 4
+	}
+	size = 4
+	text = arm64asm.GoSyntax(inst, pc, lookup, nil)
+	return text, size
 }

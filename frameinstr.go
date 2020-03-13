@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/derekparker/delve/pkg/dwarf/op"
-	"github.com/derekparker/delve/pkg/dwarf/util"
+	"github.com/go-delve/delve/pkg/dwarf/op"
+	"github.com/go-delve/delve/pkg/dwarf/util"
 )
 
 //go:generate go run scripts/gen-frame-opcodes.go ./frame_opcodes.txt ./frame_opcodes.go

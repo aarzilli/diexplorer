@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/derekparker/delve/pkg/dwarf/frame"
-	"github.com/derekparker/delve/pkg/dwarf/op"
+	"github.com/go-delve/delve/pkg/dwarf/frame"
+	"github.com/go-delve/delve/pkg/dwarf/op"
 )
 
 type HandleFunc func(w http.ResponseWriter, r *http.Request)

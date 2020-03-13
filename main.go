@@ -12,8 +12,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/derekparker/delve/pkg/dwarf/frame"
-	"github.com/derekparker/delve/pkg/dwarf/op"
+	"github.com/go-delve/delve/pkg/dwarf/frame"
+	"github.com/go-delve/delve/pkg/dwarf/op"
 )
 
 var Dwarf *dwarf.Data
@@ -22,6 +22,7 @@ var TextData []byte
 var DebugLoc loclistReader
 var DebugFrame frame.FrameDescriptionEntries
 var Symbols []Sym
+var DisassembleOne DisassembleFunc
 var mu sync.Mutex
 
 var ListenAddr = "127.0.0.1:0"
@@ -54,11 +55,17 @@ func openPE(path string) {
 	Dwarf, err = file.DWARF()
 	must(err)
 
+	var ptrsz int
+
 	var imageBase uint64
 	switch oh := file.OptionalHeader.(type) {
 	case *pe.OptionalHeader32:
+		ptrsz = 4
+		DisassembleOne = disassembleOne386
 		imageBase = uint64(oh.ImageBase)
 	case *pe.OptionalHeader64:
+		ptrsz = 8
+		DisassembleOne = disassembleOneAmd64
 		imageBase = oh.ImageBase
 	default:
 		panic(fmt.Errorf("pe file format not recognized"))
@@ -72,10 +79,10 @@ func openPE(path string) {
 	must(err)
 	if locData, _ := GetDebugSectionPE(file, "loc"); locData != nil {
 		DebugLoc.data = locData
-		DebugLoc.ptrSz = 8
+		DebugLoc.ptrSz = ptrsz
 	}
 	if frameData, _ := GetDebugSectionPE(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz)
 	}
 	return
 }
@@ -94,6 +101,7 @@ func openMacho(path string) {
 	if sect == nil {
 		panic(fmt.Errorf("text section not found"))
 	}
+	DisassembleOne = disassembleOneAmd64
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
@@ -102,7 +110,7 @@ func openMacho(path string) {
 		DebugLoc.ptrSz = 8
 	}
 	if frameData, _ := GetDebugSectionMacho(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, 8)
 	}
 	return
 }
@@ -112,6 +120,18 @@ func openElf(path string) {
 	if file == nil {
 		return
 	}
+
+	var ptrsz int = 8
+	switch file.Machine {
+	case elf.EM_386: // more 32bit arches go here...
+		DisassembleOne = disassembleOne386
+		ptrsz = 4
+	case elf.EM_X86_64:
+		DisassembleOne = disassembleOneAmd64
+	case elf.EM_AARCH64:
+		DisassembleOne = disassembleOneArm64
+	}
+
 	fmt.Fprintf(os.Stderr, "Found ELF executable\n")
 	var err error
 	Dwarf, err = file.DWARF()
@@ -125,10 +145,10 @@ func openElf(path string) {
 	must(err)
 	if locData, _ := GetDebugSectionElf(file, "loc"); locData != nil {
 		DebugLoc.data = locData
-		DebugLoc.ptrSz = 8
+		DebugLoc.ptrSz = ptrsz
 	}
 	if frameData, _ := GetDebugSectionElf(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0)
+		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz)
 	}
 	return
 }
