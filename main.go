@@ -101,7 +101,16 @@ func openMacho(path string) {
 	if sect == nil {
 		panic(fmt.Errorf("text section not found"))
 	}
-	DisassembleOne = disassembleOneAmd64
+	switch file.Cpu {
+	case macho.Cpu386:
+		DisassembleOne = disassembleOne386
+	case macho.CpuArm64:
+		DisassembleOne = disassembleOneArm64
+	case macho.CpuAmd64:
+		fallthrough
+	default:
+		DisassembleOne = disassembleOneAmd64
+	}
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
