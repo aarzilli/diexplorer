@@ -166,10 +166,16 @@ type EntryNode struct {
 	E      *dwarf.Entry
 	Childs []*EntryNode
 	Ranges [][2]uint64
+
+	allDebugFrames bool
 }
 
 func (en *EntryNode) IsFunction() bool {
 	return en.E.Tag == dwarf.TagSubprogram
+}
+
+func (en *EntryNode) IsCompileUnit() bool {
+	return en.E.Tag == dwarf.TagCompileUnit
 }
 
 func (entryNode *EntryNode) Frames() []interface{} {
@@ -178,10 +184,15 @@ func (entryNode *EntryNode) Frames() []interface{} {
 	for _, frame := range DebugFrame {
 		frameRng := [2]uint64{frame.Begin(), frame.End()}
 		o := false
-		for _, rng := range entryNode.Ranges {
-			if rangesOverlap(rng, frameRng) {
-				o = true
-				break
+		if entryNode.allDebugFrames {
+			o = true
+		}
+		if !o {
+			for _, rng := range entryNode.Ranges {
+				if rangesOverlap(rng, frameRng) {
+					o = true
+					break
+				}
 			}
 		}
 		if o {

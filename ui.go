@@ -149,6 +149,9 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 			{{if $first.IsFunction}}
 				<a href="#frames">Debug Frame Entries</a><hr/>
 			{{end}}
+			{{if $first.IsCompileUnit}}
+				<a href="/frames/">&gt;&gt; Debug Frame Section</a><hr/>
+			{{end}}
 		{{end}}
 		
 		{{range .}}<tt>
@@ -282,6 +285,7 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	off := offset(r)
 	root := off == 0
+	frames := strings.HasPrefix(r.URL.Path, "/frames/")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -302,23 +306,29 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 	stack := []dwarf.Offset{off}
 	seen := map[dwarf.Offset]bool{}
 
-	for len(stack) > 0 {
-		off := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if seen[off] {
-			continue
-		}
-		seen[off] = true
+	if !frames {
+		for len(stack) > 0 {
+			off := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if seen[off] {
+				continue
+			}
+			seen[off] = true
 
-		rdr.Seek(off)
-		entryNode, addOffs := toEntryNode(rdr)
-		stack = append(stack, addOffs...)
-		nodes = append(nodes, entryNode)
-		if root {
-			if e, _ := rdr.Next(); e != nil {
-				stack = append(stack, e.Offset)
+			rdr.Seek(off)
+			entryNode, addOffs := toEntryNode(rdr)
+			stack = append(stack, addOffs...)
+			nodes = append(nodes, entryNode)
+			if root {
+				if e, _ := rdr.Next(); e != nil {
+					stack = append(stack, e.Offset)
+				}
 			}
 		}
+	} else {
+		e := &EntryNode{E: &dwarf.Entry{Tag: dwarf.TagSubprogram}}
+		e.allDebugFrames = true
+		nodes = append(nodes, e)
 	}
 
 	if allCompileUnits(nodes) && len(nodes) > 1 {
@@ -333,6 +343,10 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 		"EntryNodeField": func(f *dwarf.Field) template.HTML {
 			return fmtEntryNodeField(f, nodes)
 		}}).Execute(w, nodes))
+}
+
+func framesHandler(w http.ResponseWriter, r *http.Request) {
+	//TODO: implement
 }
 
 func serve() {
