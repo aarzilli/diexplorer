@@ -30,6 +30,7 @@ var ListenAddr = "127.0.0.1:0"
 type Sym struct {
 	Name string
 	Addr uint64
+	Off dwarf.Offset
 }
 
 func usage() {
@@ -393,6 +394,7 @@ func findSymbols() {
 				Symbols = append(Symbols, Sym{
 					Name: name,
 					Addr: addr,
+					Off: e.Offset,
 				})
 			}
 		case dwarf.TagVariable:
@@ -416,6 +418,7 @@ func findSymbols() {
 				Symbols = append(Symbols, Sym{
 					Name: name,
 					Addr: addr,
+					Off: e.Offset,
 				})
 			}
 		}

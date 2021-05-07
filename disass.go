@@ -13,11 +13,18 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-func lookup(addr uint64) (string, uint64) {
+type symLookup func(addr uint64) (string, uint64)
+
+type lookupper struct {
+	sym *Sym
+}
+
+func (l *lookupper) lookup(addr uint64) (string, uint64) {
 	i := sort.Search(len(Symbols), func(i int) bool { return addr < Symbols[i].Addr })
 	if i > 0 {
-		s := Symbols[i-1]
+		s := &Symbols[i-1]
 		if s.Addr != 0 && s.Addr <= addr {
+			l.sym = s
 			return s.Name, s.Addr
 		}
 	}
@@ -157,7 +164,7 @@ func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclist
 	return loclistEntries
 }
 
-type DisassembleFunc func(data []uint8, pc uint64) (text string, size uint64)
+type DisassembleFunc func(data []uint8, pc uint64, lookup symLookup) (text string, size uint64)
 
 func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	startPC, endPC := en.Ranges[0][0], en.Ranges[0][1]
@@ -223,8 +230,10 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	fmt.Fprintf(out, "<tr><td>Pos</td><td><a href='#flaghelp'>flags</a></td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
+		
+		var lup lookupper
 
-		text, size := DisassembleOne(TextData[i:], pc)
+		text, size := DisassembleOne(TextData[i:], pc, lup.lookup)
 
 		// find file:line
 		for lnevalid && lne.Address < pc {
@@ -256,8 +265,14 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 		if prologueend {
 			flagstr += "P"
 		}
+		
+		link := ""
+		
+		if lup.sym != nil && lup.sym.Off != en.E.Offset {
+			link = fmt.Sprintf("&nbsp;&nbsp;<a href='/%x'>&gt;&gt;&gt;</a>", lup.sym.Off)
+		}
 
-		fmt.Fprintf(out, "<td>%s:%d</td><td>%s</td><td>%#x</td><td>%x</td><td>%s</td>\n", html.EscapeString(filepath.Base(file)), line, flagstr, pc, TextData[i:i+size], html.EscapeString(text))
+		fmt.Fprintf(out, "<td>%s:%d</td><td>%s</td><td>%#x</td><td>%x</td><td>%s%s</td>\n", html.EscapeString(filepath.Base(file)), line, flagstr, pc, TextData[i:i+size], html.EscapeString(text), link)
 
 		fmt.Fprintf(out, "</tr>\n")
 		pc += size
@@ -265,27 +280,27 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	fmt.Fprintf(out, "</table></tt>\n<a name='flaghelp'></a><h3>Flag Help</h3>S - statement<br>P - end of prologue<br></body>\n")
 }
 
-func disassembleOneAmd64(data []uint8, pc uint64) (text string, size uint64) {
+func disassembleOneAmd64(data []uint8, pc uint64, lookup symLookup) (text string, size uint64) {
 	inst, err := x86asm.Decode(data, 64)
 	size = uint64(inst.Len)
 	if err != nil || size == 0 || inst.Op == 0 {
 		return "?", 1
 	}
-	text = x86asm.GoSyntax(inst, pc, lookup)
+	text = x86asm.GoSyntax(inst, pc, x86asm.SymLookup(lookup))
 	return text, size
 }
 
-func disassembleOne386(data []uint8, pc uint64) (text string, size uint64) {
+func disassembleOne386(data []uint8, pc uint64, lookup symLookup) (text string, size uint64) {
 	inst, err := x86asm.Decode(data, 32)
 	size = uint64(inst.Len)
 	if err != nil || size == 0 || inst.Op == 0 {
 		return "?", 1
 	}
-	text = x86asm.GoSyntax(inst, pc, lookup)
+	text = x86asm.GoSyntax(inst, pc, x86asm.SymLookup(lookup))
 	return text, size
 }
 
-func disassembleOneArm64(data []uint8, pc uint64) (text string, size uint64) {
+func disassembleOneArm64(data []uint8, pc uint64, lookup symLookup) (text string, size uint64) {
 	inst, err := arm64asm.Decode(data)
 	if err != nil {
 		return "?", 4
