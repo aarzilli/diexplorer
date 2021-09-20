@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -65,17 +66,42 @@ func fmtEntryNodeHeader(e *dwarf.Entry) template.HTML {
 	return template.HTML(fmt.Sprintf("<a name=\"%x\"><a href=\"/%x\">&lt;%x&gt;</a> <b>%s</b>", e.Offset, e.Offset, e.Offset, e.Tag.String()))
 }
 
+const (
+	_DW_AT_go_kind           = 0x2900
+	_DW_AT_go_key            = 0x2901
+	_DW_AT_go_elem           = 0x2902
+	_DW_AT_go_embedded_field = 0x2903
+	_DW_AT_go_runtime_type   = 0x2904
+	_DW_AT_go_package_name   = 0x2905
+	_DW_AT_go_dict_index     = 0x2906
+)
+
 func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 	switch f.Class {
 	case dwarf.ClassReference:
 		name := findReferenceName(f.Val.(dwarf.Offset), nodes)
-		return template.HTML(fmt.Sprintf("<td>%s</td><td><a href=\"#%x\">&lt;%x&gt;</a> (%s)</td>", f.Attr.String(), f.Val.(dwarf.Offset), f.Val.(dwarf.Offset), html.EscapeString(name)))
+		attrName := f.Attr.String()
+		switch f.Attr {
+		case _DW_AT_go_key:
+			attrName = "GoKey"
+		case _DW_AT_go_elem:
+			attrName = "GoElem"
+		}
+		return template.HTML(fmt.Sprintf("<td>%s</td><td><a href=\"#%x\">&lt;%x&gt;</a> (%s)</td>", attrName, f.Val.(dwarf.Offset), f.Val.(dwarf.Offset), html.EscapeString(name)))
 
 	case dwarf.ClassAddress:
-		return template.HTML(fmt.Sprintf("<td>%s</td><td>%#x</td>", f.Attr.String(), f.Val.(uint64)))
+		if f.Attr == _DW_AT_go_runtime_type {
+			return template.HTML(fmt.Sprintf("<td>GoRuntimeType</td><td>%#x</td>", f.Val.(uint64)))
+		} else {
+			return template.HTML(fmt.Sprintf("<td>%s</td><td>%#x</td>", f.Attr.String(), f.Val.(uint64)))
+		}
 
 	case dwarf.ClassString:
-		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(strconv.Quote(f.Val.(string)))))
+		attrName := f.Attr.String()
+		if f.Attr == _DW_AT_go_package_name {
+			attrName = "GoPackageName"
+		}
+		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", attrName, html.EscapeString(strconv.Quote(f.Val.(string)))))
 
 	case dwarf.ClassExprLoc:
 		block, _ := f.Val.([]byte)
@@ -86,7 +112,23 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
 
 	default:
-		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(fmt.Sprint(f.Val))))
+		var attrName string
+		val := f.Val
+		switch f.Attr {
+		case _DW_AT_go_kind:
+			attrName = "GoKind"
+			if n, ok := f.Val.(int64); ok {
+				val = reflect.Kind(n)
+			}
+		case _DW_AT_go_embedded_field:
+			attrName = "GoEmbeddedField"
+		case _DW_AT_go_dict_index:
+			attrName = "GoDictIndex"
+		default:
+			attrName = f.Attr.String()
+		}
+		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", attrName, html.EscapeString(fmt.Sprint(val))))
+
 	}
 }
 
