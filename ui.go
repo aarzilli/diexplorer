@@ -278,6 +278,21 @@ var framesetTmpl = template.Must(template.New("fn").Funcs(funcMap).Parse(`<!doct
 </frameset>
 `))
 
+var instantiationsTmpl = template.Must(template.New("fn").Funcs(funcMap).Parse(`<!doctype html>
+<html>
+	<head>
+	</head>
+	<body>
+		<p>Inlined calls:
+		<ul>
+		{{range .}}
+		<li><a href="/{{.Offset | printf "%x"}}" target='_top'>{{.FnName}}</a>
+		{{end}}
+		</ul>
+	</body>
+</html>
+`))
+
 func offset(r *http.Request) dwarf.Offset {
 	v := strings.Split(r.URL.Path, "/")
 	for _, x := range v {
@@ -300,6 +315,11 @@ func disassembleHandler(w http.ResponseWriter, r *http.Request) {
 	rdr := Dwarf.Reader()
 	rdr.Seek(off)
 	entryNode, _ := toEntryNode(rdr)
+
+	if inl, _ := entryNode.E.Val(dwarf.AttrInline).(int64); inl == 1 {
+		must(instantiationsTmpl.Execute(w, collectInlinedCalls(entryNode)))
+		return
+	}
 
 	rdr.Seek(0)
 	var cu *dwarf.Entry

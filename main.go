@@ -30,7 +30,7 @@ var ListenAddr = "127.0.0.1:0"
 type Sym struct {
 	Name string
 	Addr uint64
-	Off dwarf.Offset
+	Off  dwarf.Offset
 }
 
 func usage() {
@@ -394,7 +394,7 @@ func findSymbols() {
 				Symbols = append(Symbols, Sym{
 					Name: name,
 					Addr: addr,
-					Off: e.Offset,
+					Off:  e.Offset,
 				})
 			}
 		case dwarf.TagVariable:
@@ -418,7 +418,7 @@ func findSymbols() {
 				Symbols = append(Symbols, Sym{
 					Name: name,
 					Addr: addr,
-					Off: e.Offset,
+					Off:  e.Offset,
 				})
 			}
 		}
@@ -467,4 +467,39 @@ func main() {
 	findSymbols()
 
 	serve()
+}
+
+type InlinedCall struct {
+	FnName string
+	Offset dwarf.Offset
+}
+
+func collectInlinedCalls(entryNode *EntryNode) []InlinedCall {
+	rdr := Dwarf.Reader()
+	rdr.Seek(0)
+
+	calls := []InlinedCall{}
+
+	var fn *dwarf.Entry
+	for {
+		e, err := rdr.Next()
+		must(err)
+		if e == nil {
+			break
+		}
+		switch e.Tag {
+		case dwarf.TagSubprogram:
+			fn = e
+		case dwarf.TagInlinedSubroutine:
+			if e.Val(dwarf.AttrAbstractOrigin).(dwarf.Offset) == entryNode.E.Offset {
+				name := fn.Val(dwarf.AttrName).(string)
+				if name == "" {
+					name = fmt.Sprintf("function at %x", fn.Offset)
+				}
+				calls = append(calls, InlinedCall{name, fn.Offset})
+			}
+		}
+	}
+
+	return calls
 }
