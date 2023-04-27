@@ -140,6 +140,10 @@ func openElf(path string) {
 		DisassembleOne = disassembleOneAmd64
 	case elf.EM_AARCH64:
 		DisassembleOne = disassembleOneArm64
+	case elf.EM_PPC64:
+		DisassembleOne = disassembleOnePpc64
+	default:
+		fmt.Printf("unknown machine %s\n", file.Machine)
 	}
 
 	fmt.Fprintf(os.Stderr, "Found ELF executable\n")

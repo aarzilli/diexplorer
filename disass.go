@@ -2,6 +2,7 @@ package main
 
 import (
 	"debug/dwarf"
+	"encoding/binary"
 	"fmt"
 	"html"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/ppc64/ppc64asm"
 	"golang.org/x/arch/x86/x86asm"
 )
 
@@ -230,7 +232,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 	fmt.Fprintf(out, "<tr><td>Pos</td><td><a href='#flaghelp'>flags</a></td><td>PC</td><td>Bytes</td><td>Instruction</td></tr>\n")
 	for pc := startPC; pc < endPC; {
 		i := uint64(pc) - TextStart
-		
+
 		var lup lookupper
 
 		text, size := DisassembleOne(TextData[i:], pc, lup.lookup)
@@ -265,9 +267,9 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 		if prologueend {
 			flagstr += "P"
 		}
-		
+
 		link := ""
-		
+
 		if lup.sym != nil && lup.sym.Off != en.E.Offset {
 			link = fmt.Sprintf("&nbsp;&nbsp;<a href='/%x'>&gt;&gt;&gt;</a>", lup.sym.Off)
 		}
@@ -307,5 +309,15 @@ func disassembleOneArm64(data []uint8, pc uint64, lookup symLookup) (text string
 	}
 	size = 4
 	text = arm64asm.GoSyntax(inst, pc, lookup, nil)
+	return text, size
+}
+
+func disassembleOnePpc64(data []uint8, pc uint64, lookup symLookup) (text string, size uint64) {
+	inst, err := ppc64asm.Decode(data, binary.LittleEndian)
+	if err != nil {
+		return "?", 4
+	}
+	size = 4
+	text = ppc64asm.GoSyntax(inst, pc, lookup)
 	return text, size
 }
