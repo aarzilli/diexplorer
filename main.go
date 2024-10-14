@@ -142,6 +142,8 @@ func openElf(path string) {
 		DisassembleOne = disassembleOneArm64
 	case elf.EM_PPC64:
 		DisassembleOne = disassembleOnePpc64
+	case elf.EM_RISCV:
+		DisassembleOne = disassembleOneRiscv64
 	default:
 		fmt.Printf("unknown machine %s\n", file.Machine)
 	}

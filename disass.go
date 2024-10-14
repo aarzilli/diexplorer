@@ -13,6 +13,7 @@ import (
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/ppc64/ppc64asm"
 	"golang.org/x/arch/x86/x86asm"
+	"golang.org/x/arch/riscv64/riscv64asm"
 )
 
 type symLookup func(addr uint64) (string, uint64)
@@ -320,4 +321,15 @@ func disassembleOnePpc64(data []uint8, pc uint64, lookup symLookup) (text string
 	size = 4
 	text = ppc64asm.GoSyntax(inst, pc, lookup)
 	return text, size
+}
+
+func disassembleOneRiscv64(data []uint8, pc uint64, lookup symLookup) (text string, size uint64) {
+	inst, err := riscv64asm.Decode(data)
+	if err != nil {
+		return "?", 4
+	}
+	size = 4
+	text = riscv64asm.GoSyntax(inst, pc, lookup, nil)
+	return text, size
+	
 }
