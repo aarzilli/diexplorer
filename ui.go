@@ -76,7 +76,7 @@ const (
 	_DW_AT_go_dict_index     = 0x2906
 )
 
-func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
+func fmtEntryNodeField(en *EntryNode, f *dwarf.Field, nodes []*EntryNode) template.HTML {
 	switch f.Class {
 	case dwarf.ClassReference:
 		name := findReferenceName(f.Val.(dwarf.Offset), nodes)
@@ -109,7 +109,7 @@ func fmtEntryNodeField(f *dwarf.Field, nodes []*EntryNode) template.HTML {
 		op.PrettyPrint(&out, block)
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(out.String())))
 	case dwarf.ClassLocListPtr:
-		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(nodes[0]))))
+		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(en), loclistReaderForEntry(en))))
 
 	default:
 		var attrName string
@@ -219,11 +219,12 @@ var tmpl = template.Must(template.New("all").Funcs(funcMap).Parse(`<!doctype htm
 </html>
 
 {{define "entryNode"}}
+        {{$en := .}}
 	<div style="padding-left: 1em;">
 		{{EntryNodeHeader .E}}<br>
 		<table style="padding-left: 1em;" class='dwarftbl'>
 		{{range .E.Field}}
-			<tr>{{EntryNodeField .}}</tr>
+			<tr>{{EntryNodeField $en .}}</tr>
 		{{end}}
 		</table>
 		{{if .Ranges}}
@@ -402,8 +403,8 @@ func allHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	must(tmpl.Funcs(template.FuncMap{
-		"EntryNodeField": func(f *dwarf.Field) template.HTML {
-			return fmtEntryNodeField(f, nodes)
+		"EntryNodeField": func(en *EntryNode, f *dwarf.Field) template.HTML {
+			return fmtEntryNodeField(en, f, nodes)
 		}}).Execute(w, nodes))
 }
 

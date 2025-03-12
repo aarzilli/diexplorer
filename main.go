@@ -17,9 +17,12 @@ import (
 )
 
 var Dwarf *dwarf.Data
+var UnitVersions map[dwarf.Offset]uint8
 var TextStart uint64
 var TextData []byte
-var DebugLoc loclistReader
+var DebugLoc2 *loclistReader2
+var DebugLoc5 *loclistSection5
+var DebugAddr5 *DebugAddrSection
 var DebugFrame frame.FrameDescriptionEntries
 var Symbols []Sym
 var DisassembleOne DisassembleFunc
@@ -78,13 +81,10 @@ func openPE(path string) {
 	TextStart = imageBase + uint64(sect.VirtualAddress)
 	TextData, err = sect.Data()
 	must(err)
-	if locData, _ := GetDebugSectionPE(file, "loc"); locData != nil {
-		DebugLoc.data = locData
-		DebugLoc.ptrSz = ptrsz
-	}
-	if frameData, _ := GetDebugSectionPE(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz)
-	}
+	initializeSections(ptrsz, func(name string) []byte {
+		data, _ := GetDebugSectionPE(file, name)
+		return data
+	})
 	return
 }
 
@@ -115,13 +115,10 @@ func openMacho(path string) {
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
-	if locData, _ := GetDebugSectionMacho(file, "loc"); locData != nil {
-		DebugLoc.data = locData
-		DebugLoc.ptrSz = 8
-	}
-	if frameData, _ := GetDebugSectionMacho(file, "frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, 8)
-	}
+	initializeSections(8, func(name string) []byte {
+		data, _ := GetDebugSectionMacho(file, name)
+		return data
+	})
 	return
 }
 
@@ -159,14 +156,29 @@ func openElf(path string) {
 	TextStart = sect.Addr
 	TextData, err = sect.Data()
 	must(err)
-	if locData, _ := GetDebugSectionElf(file, "loc"); locData != nil {
-		DebugLoc.data = locData
-		DebugLoc.ptrSz = ptrsz
+	initializeSections(ptrsz, func(name string) []byte {
+		data, _ := GetDebugSectionElf(file, name)
+		return data
+	})
+	return
+}
+
+func initializeSections(ptrsz int, getSection func(name string) []byte) {
+	if locData := getSection("loc"); locData != nil {
+		DebugLoc2 = newLoclistReader2(locData, ptrsz)
 	}
-	if frameData, _ := GetDebugSectionElf(file, "frame"); frameData != nil {
+	if locData := getSection("loclists"); locData != nil {
+		DebugLoc5 = newLoclistSection5(locData, ptrsz)
+	}
+	if frameData := getSection("frame"); frameData != nil {
 		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz)
 	}
-	return
+	if infoData := getSection("info"); infoData != nil {
+		readUnitVersions(infoData)
+	}
+	if addrData := getSection("addr"); addrData != nil {
+		DebugAddr5 = parseDebugAddr(addrData)
+	}
 }
 
 type EntryNode struct {
@@ -294,70 +306,13 @@ func allCompileUnits(nodes []*EntryNode) bool {
 	return true
 }
 
-type loclistReader struct {
-	data  []byte
-	cur   int
-	ptrSz int
-}
-
-func (rdr *loclistReader) Seek(off int) {
-	rdr.cur = off
-}
-
-func (rdr *loclistReader) read(sz int) []byte {
-	r := rdr.data[rdr.cur : rdr.cur+sz]
-	rdr.cur += sz
-	return r
-}
-
-func (rdr *loclistReader) oneAddr() uint64 {
-	switch rdr.ptrSz {
-	case 4:
-		addr := binary.LittleEndian.Uint32(rdr.read(rdr.ptrSz))
-		if addr == ^uint32(0) {
-			return ^uint64(0)
-		}
-		return uint64(addr)
-	case 8:
-		addr := uint64(binary.LittleEndian.Uint64(rdr.read(rdr.ptrSz)))
-		return addr
-	default:
-		panic("bad address size")
-	}
-}
-
-func (rdr *loclistReader) Next(e *loclistEntry) bool {
-	e.seek = rdr.cur
-	e.lowpc = rdr.oneAddr()
-	e.highpc = rdr.oneAddr()
-
-	if e.lowpc == 0 && e.highpc == 0 {
-		return false
-	}
-
-	if e.BaseAddressSelection() {
-		e.instr = nil
-		return true
-	}
-
-	instrlen := binary.LittleEndian.Uint16(rdr.read(2))
-	e.instr = rdr.read(int(instrlen))
-	return true
-}
-
-type loclistEntry struct {
-	seek          int
-	lowpc, highpc uint64
-	instr         []byte
-}
-
 func (e *loclistEntry) BaseAddressSelection() bool {
 	return e.lowpc == ^uint64(0)
 }
 
-func loclistPrint(off int64, cu *dwarf.Entry) string {
+func loclistPrint(off int64, cu *dwarf.Entry, debugLoc loclistReader) string {
 	var buf bytes.Buffer
-	DebugLoc.Seek(int(off))
+	debugLoc.Seek(int(off))
 
 	var base uint64
 	curange, _ := Dwarf.Ranges(cu)
@@ -366,7 +321,7 @@ func loclistPrint(off int64, cu *dwarf.Entry) string {
 	}
 
 	var e loclistEntry
-	for DebugLoc.Next(&e) {
+	for debugLoc.Next(&e) {
 		if e.BaseAddressSelection() {
 			fmt.Fprintf(&buf, "Base address: %#x\n", e.highpc)
 			base = e.highpc
@@ -438,17 +393,23 @@ func findSymbols() {
 }
 
 func findCompileUnit(e *EntryNode) *dwarf.Entry {
-	if len(e.Ranges) <= 0 {
+	if len(e.Ranges) > 0 {
+		pc := e.Ranges[0][0]
+
+		for i := range compileUnits {
+			ranges, _ := Dwarf.Ranges(compileUnits[i])
+			for _, rng := range ranges {
+				if pc >= rng[0] && pc < rng[1] {
+					return compileUnits[i]
+				}
+			}
+		}
 		return nil
 	}
-	pc := e.Ranges[0][0]
 
 	for i := range compileUnits {
-		ranges, _ := Dwarf.Ranges(compileUnits[i])
-		for _, rng := range ranges {
-			if pc >= rng[0] && pc < rng[1] {
-				return compileUnits[i]
-			}
+		if compileUnits[i].Offset > e.E.Offset {
+			return compileUnits[i-1]
 		}
 	}
 	return nil
@@ -508,4 +469,109 @@ func collectInlinedCalls(entryNode *EntryNode) []InlinedCall {
 	}
 
 	return calls
+}
+
+func readDwarfLengthVersion(data []byte) (length uint64, dwarf64 bool, version uint8, byteOrder binary.ByteOrder) {
+	if len(data) < 4 {
+		return 0, false, 0, binary.LittleEndian
+	}
+
+	lengthfield := binary.LittleEndian.Uint32(data)
+	voff := 4
+	if lengthfield == ^uint32(0) {
+		dwarf64 = true
+		voff = 12
+	}
+
+	if voff+1 >= len(data) {
+		return 0, false, 0, binary.LittleEndian
+	}
+
+	byteOrder = binary.LittleEndian
+	x, y := data[voff], data[voff+1]
+	switch {
+	default:
+		fallthrough
+	case x == 0 && y == 0:
+		version = 0
+		byteOrder = binary.LittleEndian
+	case x == 0:
+		version = y
+		byteOrder = binary.BigEndian
+	case y == 0:
+		version = x
+		byteOrder = binary.LittleEndian
+	}
+
+	if dwarf64 {
+		length = byteOrder.Uint64(data[4:])
+	} else {
+		length = uint64(byteOrder.Uint32(data))
+	}
+
+	return length, dwarf64, version, byteOrder
+}
+
+func readUnitVersions(data []byte) {
+	const (
+		_DW_UT_compile = 0x1 + iota
+		_DW_UT_type
+		_DW_UT_partial
+		_DW_UT_skeleton
+		_DW_UT_split_compile
+		_DW_UT_split_type
+	)
+
+	UnitVersions = make(map[dwarf.Offset]uint8)
+	off := dwarf.Offset(0)
+	for len(data) > 0 {
+		length, dwarf64, version, _ := readDwarfLengthVersion(data)
+
+		data = data[4:]
+		off += 4
+		secoffsz := 4
+		if dwarf64 {
+			off += 8
+			secoffsz = 8
+			data = data[8:]
+		}
+
+		var headerSize int
+
+		switch version {
+		case 2, 3, 4:
+			headerSize = 3 + secoffsz
+		default: // 5 and later?
+			unitType := data[2]
+
+			switch unitType {
+			case _DW_UT_compile, _DW_UT_partial:
+				headerSize = 4 + secoffsz
+
+			case _DW_UT_skeleton, _DW_UT_split_compile:
+				headerSize = 4 + secoffsz + 8
+
+			case _DW_UT_type, _DW_UT_split_type:
+				headerSize = 4 + secoffsz + 8 + secoffsz
+			}
+		}
+
+		UnitVersions[off+dwarf.Offset(headerSize)] = version
+
+		data = data[length:] // skip contents
+		off += dwarf.Offset(length)
+	}
+}
+
+func loclistReaderForEntry(en *EntryNode) loclistReader {
+	const dwarfAttrAddrBase = 0x73
+	cu := findCompileUnit(en)
+	ver := UnitVersions[cu.Offset]
+	if ver >= 5 {
+		addrBase := cu.Val(dwarfAttrAddrBase).(int64)
+		ranges, _ := Dwarf.Ranges(cu)
+
+		return DebugLoc5.ReaderFor(ranges[0][0], DebugAddr5.GetSubsection(uint64(addrBase)))
+	}
+	return DebugLoc2
 }

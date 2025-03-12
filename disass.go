@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/ppc64/ppc64asm"
-	"golang.org/x/arch/x86/x86asm"
 	"golang.org/x/arch/riscv64/riscv64asm"
+	"golang.org/x/arch/x86/x86asm"
 )
 
 type symLookup func(addr uint64) (string, uint64)
@@ -127,14 +127,14 @@ func printColor(out io.Writer, name string, pi *int) {
 
 }
 
-func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclistEntry) []loclistEntry {
+func printColors(out io.Writer, en *EntryNode, pi *int, debugLoc loclistReader, loclistEntries []loclistEntry) []loclistEntry {
 	for i := range en.Childs {
 		switch en.Childs[i].E.Tag {
 		case dwarf.TagFormalParameter, dwarf.TagVariable, 0:
 			// nothing to do
 		default:
 			printColor(out, fmt.Sprintf("lb%x", en.Childs[i].E.Offset), pi)
-			loclistEntries = printColors(out, en.Childs[i], pi, loclistEntries)
+			loclistEntries = printColors(out, en.Childs[i], pi, debugLoc, loclistEntries)
 		}
 
 		for j := range en.Childs[i].E.Field {
@@ -143,7 +143,7 @@ func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclist
 				continue
 			}
 
-			DebugLoc.Seek(int(field.Val.(int64)))
+			debugLoc.Seek(int(field.Val.(int64)))
 
 			var base uint64
 			curange, _ := Dwarf.Ranges(findCompileUnit(en))
@@ -152,7 +152,7 @@ func printColors(out io.Writer, en *EntryNode, pi *int, loclistEntries []loclist
 			}
 
 			var lle loclistEntry
-			for DebugLoc.Next(&lle) {
+			for debugLoc.Next(&lle) {
 				if lle.BaseAddressSelection() {
 					base = lle.highpc
 				} else {
@@ -198,7 +198,7 @@ func disassemble(out io.Writer, en *EntryNode, ecu *dwarf.Entry) {
 `)
 
 	var i int
-	loclistEntries := printColors(out, en, &i, nil)
+	loclistEntries := printColors(out, en, &i, loclistReaderForEntry(en), nil)
 
 	fmt.Fprintf(out, `
 			};
@@ -331,5 +331,5 @@ func disassembleOneRiscv64(data []uint8, pc uint64, lookup symLookup) (text stri
 	size = 4
 	text = riscv64asm.GoSyntax(inst, pc, lookup, nil)
 	return text, size
-	
+
 }
