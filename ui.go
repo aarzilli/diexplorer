@@ -106,7 +106,7 @@ func fmtEntryNodeField(en *EntryNode, f *dwarf.Field, nodes []*EntryNode) templa
 	case dwarf.ClassExprLoc:
 		block, _ := f.Val.([]byte)
 		var out bytes.Buffer
-		op.PrettyPrint(&out, block)
+		op.PrettyPrint(&out, block, RegnumToString)
 		return template.HTML(fmt.Sprintf("<td>%s</td><td>%s</td>", f.Attr.String(), html.EscapeString(out.String())))
 	case dwarf.ClassLocListPtr:
 		return template.HTML(fmt.Sprintf("<td>%s</td><td><pre>loclistptr = %#x (<a href='#' onclick='toggleLoclist2(this)'>toggle</a>)</pre><pre class='loclist' style='display: none'>%s</pre></td>", f.Attr.String(), f.Val.(int64), loclistPrint(f.Val.(int64), findCompileUnit(en), loclistReaderForEntry(en))))

@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/go-delve/delve/pkg/dwarf/leb128"
 	"github.com/go-delve/delve/pkg/dwarf/op"
-	"github.com/go-delve/delve/pkg/dwarf/util"
 )
 
 //go:generate go run scripts/gen-frame-opcodes.go ./frame_opcodes.txt ./frame_opcodes.go
@@ -50,10 +50,10 @@ func PrettyPrintFrameInstr(instrs []uint8, lowpc uint64) string {
 		for _, arg := range frameOpcodeArgs[opcode] {
 			switch arg {
 			case 's':
-				n, _ := util.DecodeSLEB128(in)
+				n, _ := leb128.DecodeSigned(in)
 				fmt.Fprintf(out, "%#x ", n)
 			case 'u':
-				n, _ := util.DecodeULEB128(in)
+				n, _ := leb128.DecodeUnsigned(in)
 				fmt.Fprintf(out, "%#x ", n)
 			case '1':
 				var x uint8
@@ -88,11 +88,11 @@ func PrettyPrintFrameInstr(instrs []uint8, lowpc uint64) string {
 					fmt.Fprintf(out, "to %#x ", loc)
 				}
 			case 'B':
-				sz, _ := util.DecodeULEB128(in)
+				sz, _ := leb128.DecodeUnsigned(in)
 				data := make([]byte, sz)
 				sz2, _ := in.Read(data)
 				data = data[:sz2]
-				op.PrettyPrint(out, data)
+				op.PrettyPrint(out, data, RegnumToString)
 				fmt.Fprintf(out, "")
 			}
 		}

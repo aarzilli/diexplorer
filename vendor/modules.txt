@@ -1,8 +1,11 @@
-# github.com/go-delve/delve v1.4.1-0.20200311224041-1a9e38aa0cbc
-## explicit; go 1.11
+# github.com/go-delve/delve v1.24.1
+## explicit; go 1.21
+github.com/go-delve/delve/pkg/dwarf
 github.com/go-delve/delve/pkg/dwarf/frame
+github.com/go-delve/delve/pkg/dwarf/godwarf
+github.com/go-delve/delve/pkg/dwarf/leb128
 github.com/go-delve/delve/pkg/dwarf/op
-github.com/go-delve/delve/pkg/dwarf/util
+github.com/go-delve/delve/pkg/dwarf/regnum
 # golang.org/x/arch v0.11.0
 ## explicit; go 1.18
 golang.org/x/arch/arm64/arm64asm

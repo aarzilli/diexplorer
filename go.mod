@@ -1,8 +1,8 @@
 module github.com/aarzilli/diexplorer
 
-go 1.21
+go 1.24
 
 require (
-	github.com/go-delve/delve v1.4.1-0.20200311224041-1a9e38aa0cbc
+	github.com/go-delve/delve v1.24.1
 	golang.org/x/arch v0.11.0
 )

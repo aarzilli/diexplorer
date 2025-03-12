@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/go-delve/delve/pkg/dwarf/util"
+	"github.com/go-delve/delve/pkg/dwarf"
+	"github.com/go-delve/delve/pkg/dwarf/godwarf"
+	"github.com/go-delve/delve/pkg/dwarf/leb128"
 )
 
 type loclistEntry struct {
@@ -84,13 +86,13 @@ func newLoclistSection5(data []byte, ptrsz int) *loclistSection5 {
 	return &loclistSection5{byteOrder: binary.LittleEndian, ptrSz: ptrsz, data: data}
 }
 
-func (sec *loclistSection5) ReaderFor(base uint64, debugAddr *DebugAddr) *loclistReader5 {
+func (sec *loclistSection5) ReaderFor(base uint64, debugAddr *godwarf.DebugAddr) *loclistReader5 {
 	return &loclistReader5{sec: sec, debugAddr: debugAddr, buf: bytes.NewBuffer(sec.data), base: base}
 }
 
 type loclistReader5 struct {
 	sec       *loclistSection5
-	debugAddr *DebugAddr
+	debugAddr *godwarf.DebugAddr
 	buf       *bytes.Buffer
 	base      uint64
 
@@ -136,13 +138,13 @@ again:
 		return false
 
 	case _DW_LLE_base_addressx:
-		baseIdx, _ := util.DecodeULEB128(rdr.buf)
+		baseIdx, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.base, rdr.err = rdr.debugAddr.Get(baseIdx)
 		goto again
 
 	case _DW_LLE_startx_endx:
-		startIdx, _ := util.DecodeULEB128(rdr.buf)
-		endIdx, _ := util.DecodeULEB128(rdr.buf)
+		startIdx, _ := leb128.DecodeUnsigned(rdr.buf)
+		endIdx, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 
 		le.lowpc, rdr.err = rdr.debugAddr.Get(startIdx)
@@ -152,8 +154,8 @@ again:
 		return true
 
 	case _DW_LLE_startx_length:
-		startIdx, _ := util.DecodeULEB128(rdr.buf)
-		length, _ := util.DecodeULEB128(rdr.buf)
+		startIdx, _ := leb128.DecodeUnsigned(rdr.buf)
+		length, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 
 		le.lowpc, rdr.err = rdr.debugAddr.Get(startIdx)
@@ -161,8 +163,8 @@ again:
 		return true
 
 	case _DW_LLE_offset_pair:
-		off1, _ := util.DecodeULEB128(rdr.buf)
-		off2, _ := util.DecodeULEB128(rdr.buf)
+		off1, _ := leb128.DecodeUnsigned(rdr.buf)
+		off2, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 
 		le.lowpc = rdr.base + off1
@@ -175,18 +177,18 @@ again:
 		goto again
 
 	case _DW_LLE_base_address:
-		rdr.base, rdr.err = readUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
+		rdr.base, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
 		goto again
 
 	case _DW_LLE_start_end:
-		le.lowpc, rdr.err = readUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
-		le.highpc, rdr.err = readUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
+		le.lowpc, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
+		le.highpc, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
 		rdr.readInstr()
 		return true
 
 	case _DW_LLE_start_length:
-		le.lowpc, rdr.err = readUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
-		length, _ := util.DecodeULEB128(rdr.buf)
+		le.lowpc, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
+		length, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 		le.highpc = le.lowpc + length
 		return true
@@ -201,6 +203,6 @@ again:
 }
 
 func (rdr *loclistReader5) readInstr() {
-	length, _ := util.DecodeULEB128(rdr.buf)
+	length, _ := leb128.DecodeUnsigned(rdr.buf)
 	rdr.instr = rdr.buf.Next(int(length))
 }

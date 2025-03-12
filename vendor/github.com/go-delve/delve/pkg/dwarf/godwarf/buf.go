@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Buffered reading and decoding of DWARF data streams.
+//lint:file-ignore ST1021 imported file
 
-package util
+package godwarf
 
 import (
 	"debug/dwarf"
 	"fmt"
 )
 
-// Data buffer being decoded.
+// buf is data buffer being decoded.
 type buf struct {
 	dwarf  *dwarf.Data
 	format dataFormat
@@ -21,7 +21,7 @@ type buf struct {
 	Err    error
 }
 
-// Data format, other than byte order.  This affects the handling of
+// Data format, other than byte order. This affects the handling of
 // certain field formats.
 type dataFormat interface {
 	// DWARF version number.  Zero means unknown.
@@ -34,33 +34,27 @@ type dataFormat interface {
 	addrsize() int
 }
 
-// Some parts of DWARF have no data format, e.g., abbrevs.
-type UnknownFormat struct{}
+// unknownFormat is a struct for some parts of DWARF that have no data format, e.g., abbrevs.
+type unknownFormat struct{}
 
-func (u UnknownFormat) version() int {
+func (u unknownFormat) version() int {
 	return 0
 }
 
-func (u UnknownFormat) dwarf64() (bool, bool) {
+func (u unknownFormat) dwarf64() (bool, bool) {
 	return false, false
 }
 
-func (u UnknownFormat) addrsize() int {
+func (u unknownFormat) addrsize() int {
 	return 0
 }
 
-func MakeBuf(d *dwarf.Data, format dataFormat, name string, off dwarf.Offset, data []byte) buf {
+// makeBuf creates buf for reading and decoding of DWARF data streams.
+func makeBuf(d *dwarf.Data, format dataFormat, name string, off dwarf.Offset, data []byte) buf {
 	return buf{d, format, name, off, data, nil}
 }
 
-func (b *buf) slice(length int) buf {
-	n := *b
-	data := b.data
-	b.skip(length) // Will validate length.
-	n.data = data[:length]
-	return n
-}
-
+// Uint8 reads an uint8.
 func (b *buf) Uint8() uint8 {
 	if len(b.data) < 1 {
 		b.error("underflow")
@@ -72,35 +66,7 @@ func (b *buf) Uint8() uint8 {
 	return val
 }
 
-func (b *buf) bytes(n int) []byte {
-	if len(b.data) < n {
-		b.error("underflow")
-		return nil
-	}
-	data := b.data[0:n]
-	b.data = b.data[n:]
-	b.off += dwarf.Offset(n)
-	return data
-}
-
-func (b *buf) skip(n int) { b.bytes(n) }
-
-// string returns the NUL-terminated (C-like) string at the start of the buffer.
-// The terminal NUL is discarded.
-func (b *buf) string() string {
-	for i := 0; i < len(b.data); i++ {
-		if b.data[i] == 0 {
-			s := string(b.data[0:i])
-			b.data = b.data[i+1:]
-			b.off += dwarf.Offset(i + 1)
-			return s
-		}
-	}
-	b.error("underflow")
-	return ""
-}
-
-// Read a varint, which is 7 bits per byte, little endian.
+// Varint reads a varint, which is 7 bits per byte, little endian.
 // the 0x80 bit means read another byte.
 func (b *buf) Varint() (c uint64, bits uint) {
 	for i := 0; i < len(b.data); i++ {
@@ -116,13 +82,13 @@ func (b *buf) Varint() (c uint64, bits uint) {
 	return 0, 0
 }
 
-// Unsigned int is just a varint.
+// Uint is just a varint.
 func (b *buf) Uint() uint64 {
 	x, _ := b.Varint()
 	return x
 }
 
-// Signed int is a sign-extended varint.
+// Int is a sign-extended varint.
 func (b *buf) Int() int64 {
 	ux, bits := b.Varint()
 	x := int64(ux)
@@ -146,6 +112,6 @@ func (b *buf) AssertEmpty() {
 func (b *buf) error(s string) {
 	if b.Err == nil {
 		b.data = nil
-		b.Err = dwarf.DecodeError{b.name, b.off, s}
+		b.Err = dwarf.DecodeError{Name: b.name, Offset: b.off, Err: s}
 	}
 }

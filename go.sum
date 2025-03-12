@@ -2,6 +2,8 @@ github.com/cosiner/argv v0.0.0-20170225145430-13bacc38a0a5/go.mod h1:p/NrK5tF6IC
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/go-delve/delve v1.4.1-0.20200311224041-1a9e38aa0cbc h1:RVZftTg7k16UcGuY7+QUgu0yj5DhVLUooyR6/l5uW1Q=
 github.com/go-delve/delve v1.4.1-0.20200311224041-1a9e38aa0cbc/go.mod h1:q4qCoMU26GCww+B/Qx2WGQ1v0WLZjsO0hzh6H1+NhAI=
+github.com/go-delve/delve v1.24.1 h1:RjR/fbsxsPFpvFl3cGtQbM8asNrKEiG9mVp4RtU+tnE=
+github.com/go-delve/delve v1.24.1/go.mod h1:kJk12wo6PqzWknTP6M+Pg3/CrNhFMZvNq1iHESKkhv8=
 github.com/google/go-dap v0.2.0/go.mod h1:5q8aYQFnHOAZEMP+6vmq25HKYAEwE+LF5yh7JKrrhSQ=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/mattn/go-colorable v0.0.0-20170327083344-ded68f7a9561/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=

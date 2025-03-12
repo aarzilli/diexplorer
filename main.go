@@ -9,11 +9,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 
 	"github.com/go-delve/delve/pkg/dwarf/frame"
+	"github.com/go-delve/delve/pkg/dwarf/godwarf"
 	"github.com/go-delve/delve/pkg/dwarf/op"
+	"github.com/go-delve/delve/pkg/dwarf/regnum"
 )
 
 var Dwarf *dwarf.Data
@@ -22,10 +25,11 @@ var TextStart uint64
 var TextData []byte
 var DebugLoc2 *loclistReader2
 var DebugLoc5 *loclistSection5
-var DebugAddr5 *DebugAddrSection
+var DebugAddr5 *godwarf.DebugAddrSection
 var DebugFrame frame.FrameDescriptionEntries
 var Symbols []Sym
 var DisassembleOne DisassembleFunc
+var RegnumToString func(uint64) string
 var mu sync.Mutex
 
 var ListenAddr = "127.0.0.1:0"
@@ -132,15 +136,20 @@ func openElf(path string) {
 	switch file.Machine {
 	case elf.EM_386: // more 32bit arches go here...
 		DisassembleOne = disassembleOne386
+		RegnumToString = regnum.I386ToName
 		ptrsz = 4
 	case elf.EM_X86_64:
 		DisassembleOne = disassembleOneAmd64
+		RegnumToString = regnum.AMD64ToName
 	case elf.EM_AARCH64:
 		DisassembleOne = disassembleOneArm64
+		RegnumToString = regnum.ARM64ToName
 	case elf.EM_PPC64:
 		DisassembleOne = disassembleOnePpc64
+		RegnumToString = regnum.PPC64LEToName
 	case elf.EM_RISCV:
 		DisassembleOne = disassembleOneRiscv64
+		RegnumToString = regnum.RISCV64ToName
 	default:
 		fmt.Printf("unknown machine %s\n", file.Machine)
 	}
@@ -171,13 +180,13 @@ func initializeSections(ptrsz int, getSection func(name string) []byte) {
 		DebugLoc5 = newLoclistSection5(locData, ptrsz)
 	}
 	if frameData := getSection("frame"); frameData != nil {
-		DebugFrame = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz)
+		DebugFrame, _ = frame.Parse(frameData, binary.LittleEndian, 0, ptrsz, 0)
 	}
 	if infoData := getSection("info"); infoData != nil {
 		readUnitVersions(infoData)
 	}
 	if addrData := getSection("addr"); addrData != nil {
-		DebugAddr5 = parseDebugAddr(addrData)
+		DebugAddr5 = godwarf.ParseAddr(addrData)
 	}
 }
 
@@ -328,7 +337,7 @@ func loclistPrint(off int64, cu *dwarf.Entry, debugLoc loclistReader) string {
 		} else {
 			fmt.Fprintf(&buf, "<input type='checkbox' id='ll%x' onclick='javascript:window.parent.parent.frames[1].repaint()'></input>", e.seek)
 			fmt.Fprintf(&buf, "%#x %#x ", e.lowpc+base, e.highpc+base)
-			op.PrettyPrint(&buf, e.instr)
+			op.PrettyPrint(&buf, e.instr, RegnumToString)
 			fmt.Fprintf(&buf, "\n")
 		}
 	}
@@ -432,6 +441,15 @@ func main() {
 	}
 
 	findSymbols()
+
+	for _, ver := range UnitVersions {
+		if ver >= 5 {
+			if !VersionAfterOrEqual(runtime.Version(), 1, 25) {
+				fmt.Fprintf(os.Stderr, "Executable uses DWARFv5 but diexplorer was not built with go1.25 or later")
+				os.Exit(1)
+			}
+		}
+	}
 
 	serve()
 }

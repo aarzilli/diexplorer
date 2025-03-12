@@ -1,11 +1,11 @@
-package main
+package godwarf
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"io"
+
+	"github.com/go-delve/delve/pkg/dwarf"
 )
 
 // DebugAddrSection represents the debug_addr section of DWARFv5.
@@ -16,12 +16,13 @@ type DebugAddrSection struct {
 	data      []byte
 }
 
-func parseDebugAddr(data []byte) *DebugAddrSection {
+// ParseAddr parses the header of a debug_addr section.
+func ParseAddr(data []byte) *DebugAddrSection {
 	if len(data) == 0 {
 		return nil
 	}
 	r := &DebugAddrSection{data: data}
-	_, dwarf64, _, byteOrder := readDwarfLengthVersion(data)
+	_, dwarf64, _, byteOrder := dwarf.ReadDwarfLengthVersion(data)
 	r.byteOrder = byteOrder
 	data = data[6:]
 	if dwarf64 {
@@ -55,29 +56,5 @@ func (addr *DebugAddr) Get(idx uint64) (uint64, error) {
 		return 0, errors.New("debug_addr section not present")
 	}
 	off := idx*uint64(addr.ptrSz) + addr.addrBase
-	return readUintRaw(bytes.NewReader(addr.data[off:]), addr.byteOrder, addr.ptrSz)
-}
-
-func readUintRaw(reader io.Reader, order binary.ByteOrder, ptrSize int) (uint64, error) {
-	switch ptrSize {
-	case 2:
-		var n uint16
-		if err := binary.Read(reader, order, &n); err != nil {
-			return 0, err
-		}
-		return uint64(n), nil
-	case 4:
-		var n uint32
-		if err := binary.Read(reader, order, &n); err != nil {
-			return 0, err
-		}
-		return uint64(n), nil
-	case 8:
-		var n uint64
-		if err := binary.Read(reader, order, &n); err != nil {
-			return 0, err
-		}
-		return n, nil
-	}
-	return 0, fmt.Errorf("pointer size %d not supported", ptrSize)
+	return dwarf.ReadUintRaw(bytes.NewReader(addr.data[off:]), addr.byteOrder, addr.ptrSz)
 }
