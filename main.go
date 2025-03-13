@@ -315,31 +315,19 @@ func allCompileUnits(nodes []*EntryNode) bool {
 	return true
 }
 
-func (e *loclistEntry) BaseAddressSelection() bool {
-	return e.lowpc == ^uint64(0)
-}
-
 func loclistPrint(off int64, cu *dwarf.Entry, debugLoc loclistReader) string {
 	var buf bytes.Buffer
 	debugLoc.Seek(int(off))
 
-	var base uint64
-	curange, _ := Dwarf.Ranges(cu)
-	if len(curange) > 0 {
-		base = curange[0][0]
-	}
-
 	var e loclistEntry
 	for debugLoc.Next(&e) {
-		if e.BaseAddressSelection() {
-			fmt.Fprintf(&buf, "Base address: %#x\n", e.highpc)
-			base = e.highpc
-		} else {
+		fmt.Fprintf(&buf, "%s ", e.s)
+		if e.isrange {
 			fmt.Fprintf(&buf, "<input type='checkbox' id='ll%x' onclick='javascript:window.parent.parent.frames[1].repaint()'></input>", e.seek)
-			fmt.Fprintf(&buf, "%#x %#x ", e.lowpc+base, e.highpc+base)
+			fmt.Fprintf(&buf, "%#x %#x ", e.lowpc, e.highpc)
 			op.PrettyPrint(&buf, e.instr, RegnumToString)
-			fmt.Fprintf(&buf, "\n")
 		}
+		fmt.Fprintf(&buf, "\n")
 	}
 	return buf.String()
 }
@@ -585,11 +573,12 @@ func loclistReaderForEntry(en *EntryNode) loclistReader {
 	const dwarfAttrAddrBase = 0x73
 	cu := findCompileUnit(en)
 	ver := UnitVersions[cu.Offset]
+	ranges, _ := Dwarf.Ranges(cu)
 	if ver >= 5 {
 		addrBase := cu.Val(dwarfAttrAddrBase).(int64)
-		ranges, _ := Dwarf.Ranges(cu)
 
 		return DebugLoc5.ReaderFor(ranges[0][0], DebugAddr5.GetSubsection(uint64(addrBase)))
 	}
+	DebugLoc2.base = ranges[0][0]
 	return DebugLoc2
 }

@@ -14,6 +14,8 @@ type loclistEntry struct {
 	seek          int
 	lowpc, highpc uint64
 	instr         []byte
+	isrange       bool
+	s             string
 }
 
 type loclistReader interface {
@@ -25,6 +27,7 @@ type loclistReader2 struct {
 	data  []byte
 	cur   int
 	ptrSz int
+	base  uint64
 }
 
 func newLoclistReader2(data []byte, ptrsz int) *loclistReader2 {
@@ -58,7 +61,8 @@ func (rdr *loclistReader2) oneAddr() uint64 {
 }
 
 func (rdr *loclistReader2) Next(e *loclistEntry) bool {
-	//e.seek = rdr.cur
+	*e = loclistEntry{}
+	e.seek = rdr.cur
 	e.lowpc = rdr.oneAddr()
 	e.highpc = rdr.oneAddr()
 
@@ -66,10 +70,16 @@ func (rdr *loclistReader2) Next(e *loclistEntry) bool {
 		return false
 	}
 
-	if e.BaseAddressSelection() {
+	if e.lowpc == ^uint64(0) {
+		rdr.base = e.highpc
+		e.s = fmt.Sprintf("Base address: %#x", rdr.base)
 		e.instr = nil
 		return true
 	}
+
+	e.lowpc += rdr.base
+	e.highpc += rdr.base
+	e.isrange = true
 
 	instrlen := binary.LittleEndian.Uint16(rdr.read(2))
 	e.instr = rdr.read(int(instrlen))
@@ -94,8 +104,8 @@ type loclistReader5 struct {
 	sec       *loclistSection5
 	debugAddr *godwarf.DebugAddr
 	buf       *bytes.Buffer
-	base      uint64
 
+	base         uint64
 	atEnd        bool
 	instr        []byte
 	defaultInstr []byte
@@ -129,6 +139,7 @@ again:
 		return false
 	}
 
+	*le = loclistEntry{}
 	le.seek = len(rdr.sec.data) - rdr.buf.Len()
 	le.instr = []byte{}
 
@@ -140,7 +151,8 @@ again:
 	case _DW_LLE_base_addressx:
 		baseIdx, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.base, rdr.err = rdr.debugAddr.Get(baseIdx)
-		goto again
+		le.s = fmt.Sprintf("Base address: %#x", rdr.base)
+		return true
 
 	case _DW_LLE_startx_endx:
 		startIdx, _ := leb128.DecodeUnsigned(rdr.buf)
@@ -151,6 +163,9 @@ again:
 		if rdr.err == nil {
 			le.highpc, rdr.err = rdr.debugAddr.Get(endIdx)
 		}
+
+		le.isrange = true
+		le.s = "DW_LLE_startx_endx"
 		return true
 
 	case _DW_LLE_startx_length:
@@ -160,30 +175,38 @@ again:
 
 		le.lowpc, rdr.err = rdr.debugAddr.Get(startIdx)
 		le.highpc = le.lowpc + length
+		le.s = "DW_LLE_startx_length"
+		le.isrange = true
 		return true
 
 	case _DW_LLE_offset_pair:
-		off1, _ := leb128.DecodeUnsigned(rdr.buf)
-		off2, _ := leb128.DecodeUnsigned(rdr.buf)
+		le.lowpc, _ = leb128.DecodeUnsigned(rdr.buf)
+		le.highpc, _ = leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 
-		le.lowpc = rdr.base + off1
-		le.highpc = rdr.base + off2
+		le.lowpc += rdr.base
+		le.highpc += rdr.base
+		le.s = "DW_LLE_offset_pair"
+		le.isrange = true
 		return true
 
 	case _DW_LLE_default_location:
 		rdr.readInstr()
 		rdr.defaultInstr = rdr.instr
+		le.s = "DW_LLE_default_location"
 		goto again
 
 	case _DW_LLE_base_address:
 		rdr.base, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
-		goto again
+		le.s = fmt.Sprintf("Base address: %#x", rdr.base)
+		return true
 
 	case _DW_LLE_start_end:
 		le.lowpc, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
 		le.highpc, rdr.err = dwarf.ReadUintRaw(rdr.buf, rdr.sec.byteOrder, rdr.sec.ptrSz)
 		rdr.readInstr()
+		le.isrange = true
+		le.s = "DW_LLE_start_end"
 		return true
 
 	case _DW_LLE_start_length:
@@ -191,6 +214,8 @@ again:
 		length, _ := leb128.DecodeUnsigned(rdr.buf)
 		rdr.readInstr()
 		le.highpc = le.lowpc + length
+		le.isrange = true
+		le.s = "DW_LLE_start_length"
 		return true
 
 	default:

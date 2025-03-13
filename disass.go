@@ -145,19 +145,9 @@ func printColors(out io.Writer, en *EntryNode, pi *int, debugLoc loclistReader, 
 
 			debugLoc.Seek(int(field.Val.(int64)))
 
-			var base uint64
-			curange, _ := Dwarf.Ranges(findCompileUnit(en))
-			if len(curange) > 0 {
-				base = curange[0][0]
-			}
-
 			var lle loclistEntry
 			for debugLoc.Next(&lle) {
-				if lle.BaseAddressSelection() {
-					base = lle.highpc
-				} else {
-					lle.lowpc += base
-					lle.highpc += base
+				if lle.isrange {
 					printColor(out, fmt.Sprintf("ll%x", lle.seek), pi)
 					loclistEntries = append(loclistEntries, lle)
 				}
